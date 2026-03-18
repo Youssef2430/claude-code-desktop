@@ -6,7 +6,7 @@
  * to extract text, tool calls, and permission requests, then emits
  * normalized events identical to RunManager.
  *
- * This module is behind the `CLUI_INTERACTIVE_PERMISSIONS_PTY` feature flag.
+ * This module is behind the `CLUI_INTERACTIVE_PERMISSIONS_PTY` env var feature flag.
  *
  * Known limitations:
  * - Parsing depends on Claude CLI's terminal output format (Ink-based)

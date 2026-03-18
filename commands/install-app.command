@@ -1,6 +1,6 @@
 #!/bin/bash
 # ──────────────────────────────────────────────────────
-#  Clui CC — Install App
+#  DesktopCC — Install App
 #
 #  Double-click this file in Finder to:
 #   1. Set up dependencies
@@ -15,7 +15,7 @@ set -e
 # Resolve to repo root (one level up from commands/)
 cd "$(dirname "$0")/.."
 
-APP_NAME="Clui CC"
+APP_NAME="DesktopCC"
 DEST="/Applications/${APP_NAME}.app"
 
 step() { echo; echo "═══ $1 ═══"; echo; }

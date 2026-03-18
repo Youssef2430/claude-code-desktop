@@ -1,8 +1,8 @@
-# CLUI Architecture
+# DesktopCC Architecture
 
 ## Overview
 
-CLUI is an Electron desktop application that provides a graphical interface for Claude Code CLI. It spawns `claude -p` subprocesses, parses their NDJSON output, and presents conversations in a floating overlay window.
+DesktopCC is an Electron desktop application that provides a graphical interface for Claude Code CLI. It spawns `claude -p` subprocesses, parses their NDJSON output, and presents conversations in a floating overlay window.
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
@@ -112,13 +112,13 @@ Uses Electron's `net.request()` with a 5-minute TTL cache. Individual fetch fail
 
 ### Skill Installer (`skills/installer.ts`)
 
-Auto-installs bundled skills on startup (currently: `skill-creator`). Uses pinned commit SHAs for deterministic downloads. Atomic install: validates in temp dir before swapping into `~/.claude/skills/`. Respects user-managed skills (skips if no `.clui-version` marker).
+Auto-installs bundled skills on startup (currently: `skill-creator`). Uses pinned commit SHAs for deterministic downloads. Atomic install: validates in temp dir before swapping into `~/.claude/skills/`. Respects user-managed skills (skips if no `.clui-version` marker). Managed by DesktopCC's skill installer.
 
 ## Preload (`src/preload/`)
 
 The preload script uses `contextBridge.exposeInMainWorld` to expose a typed `window.clui` API. This is the only communication surface between renderer and main process.
 
-All methods map to `ipcRenderer.invoke()` (request-response) or `ipcRenderer.send()` (fire-and-forget). The full API surface is defined in `CluiAPI` interface.
+All methods map to `ipcRenderer.invoke()` (request-response) or `ipcRenderer.send()` (fire-and-forget). The full API surface is defined in the `CluiAPI` interface.
 
 ## Renderer (`src/renderer/`)
 
@@ -152,7 +152,7 @@ Theme mode state machine: `system | light | dark` with separate `_systemIsDark` 
 
 ## IPC Channel Map
 
-All channels are defined in `src/shared/types.ts` under the `IPC` const. Events flow through a single `clui:normalized-event` channel for all Claude Code stream events, with separate channels for tab status changes and enriched errors.
+All channels are defined in `src/shared/types.ts` under the `IPC` const. Events flow through a single IPC channel for all Claude Code stream events, with separate channels for tab status changes and enriched errors.
 
 ## Data Flow: Prompt → Response
 

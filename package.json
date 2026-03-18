@@ -1,7 +1,7 @@
 {
   "name": "clui",
   "version": "0.1.0",
-  "description": "Clui CC — Command Line User Interface for Claude Code",
+  "description": "DesktopCC — Desktop UI for Claude Code",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -30,7 +30,7 @@
   },
   "build": {
     "appId": "com.clui.app",
-    "productName": "Clui CC",
+    "productName": "DesktopCC",
     "directories": {
       "output": "release"
     },
@@ -46,7 +46,7 @@
       "entitlements": "resources/entitlements.mac.plist",
       "entitlementsInherit": "resources/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Clui CC uses your microphone to transcribe voice input locally with Whisper."
+        "NSMicrophoneUsageDescription": "DesktopCC uses your microphone to transcribe voice input locally with Whisper."
       }
     }
   },

@@ -1,4 +1,4 @@
-# CLUI Open-Source Readiness Report
+# DesktopCC Open-Source Readiness Report
 
 **Date:** 2026-03-12
 **Branch:** `oss-prep`
@@ -117,7 +117,7 @@
 |------|--------|
 | `docs/protocol-captures/` | Contains local paths, session data |
 | `docs/claude-permission-probe.md` | Contains local path references |
-| `CLUI-PRD.md` | Internal product requirements |
+| `PRD.md` | Internal product requirements |
 | `CODEX_REPORT_INTERACTIVE_COMMANDS.md` | Internal dev report |
 | `spike/` | Experimental probes, not production code |
 | `src/main/probe/` | Internal contract/permission test utilities |

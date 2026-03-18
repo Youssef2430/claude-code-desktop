@@ -1,7 +1,7 @@
 #!/bin/bash
-# Clui CC environment doctor — read-only diagnostics, no installs.
+# DesktopCC environment doctor — read-only diagnostics, no installs.
 
-echo "Clui CC Environment Check"
+echo "DesktopCC Environment Check"
 echo "========================="
 echo
 
@@ -34,7 +34,7 @@ if [ "$(uname)" = "Darwin" ]; then
     check "macOS" "0" "$ver — requires 13+"
   fi
 else
-  check "macOS" "0" "not macOS ($(uname)) — Clui CC requires macOS"
+  check "macOS" "0" "not macOS ($(uname)) — DesktopCC requires macOS"
 fi
 
 # Node

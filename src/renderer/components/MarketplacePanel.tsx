@@ -111,7 +111,7 @@ export function MarketplacePanel() {
               Skills Marketplace
             </div>
             <div style={{ fontSize: 11, color: colors.textTertiary, marginTop: 2 }}>
-              Install skills and plugins without leaving CLUI
+              Install skills and plugins without leaving DesktopCC
             </div>
           </div>
         </div>

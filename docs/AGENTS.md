@@ -1,11 +1,11 @@
-# Agent Guide — Clui CC
+# Agent Guide — DesktopCC
 
 > This file is optimized for AI coding agents (Claude Code, Cursor, Copilot, etc.).
 > For human-readable docs see [ARCHITECTURE.md](ARCHITECTURE.md) and [CONTRIBUTING.md](../CONTRIBUTING.md).
 
 ## What This Project Is
 
-Clui CC is a **macOS-only Electron overlay** that wraps the Claude Code CLI (`claude -p --output-format stream-json`) in a floating pill UI. It is NOT a web app, NOT a VS Code extension, and does NOT call the Anthropic API directly — it spawns CLI subprocesses.
+DesktopCC is a **macOS-only Electron overlay** that wraps the Claude Code CLI (`claude -p --output-format stream-json`) in a floating pill UI. It is NOT a web app, NOT a VS Code extension, and does NOT call the Anthropic API directly — it spawns CLI subprocesses.
 
 ## Quick Reference
 
