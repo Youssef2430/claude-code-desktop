@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, ArrowsClockwise } from '@phosphor-icons/react'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
@@ -50,9 +50,12 @@ export function SettingsPopover() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
+  const updateReady = useThemeStore((s) => s.updateReady)
+  const updateVersion = useThemeStore((s) => s.updateVersion)
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
+  const [checking, setChecking] = useState(false)
 
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -220,6 +223,39 @@ export function SettingsPopover() {
                   label="Toggle dark theme"
                 />
               </div>
+            </div>
+
+            <div style={{ height: 1, background: colors.popoverBorder }} />
+
+            {/* Check for updates */}
+            <div>
+              <button
+                className="flex items-center gap-2 min-w-0 w-full text-left"
+                onClick={async () => {
+                  if (updateReady) {
+                    window.clui.installUpdate()
+                    return
+                  }
+                  setChecking(true)
+                  try {
+                    await window.clui.checkForUpdate()
+                  } catch {}
+                  setTimeout(() => setChecking(false), 3000)
+                }}
+              >
+                <ArrowsClockwise
+                  size={14}
+                  style={{ color: updateReady ? colors.accent : colors.textTertiary }}
+                  className={checking ? 'animate-spin' : ''}
+                />
+                <div className="text-[12px] font-medium" style={{ color: updateReady ? colors.accent : colors.textPrimary }}>
+                  {updateReady
+                    ? `Update to v${updateVersion}`
+                    : checking
+                      ? 'Checking…'
+                      : 'Check for updates'}
+                </div>
+              </button>
             </div>
           </div>
         </motion.div>,
