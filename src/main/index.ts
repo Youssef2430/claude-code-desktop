@@ -23,6 +23,7 @@ let mainWindow: BrowserWindow | null = null
 let tray: Tray | null = null
 let screenshotCounter = 0
 let toggleSequence = 0
+let forceQuit = false
 
 // Feature flag: enable PTY interactive permissions transport
 const INTERACTIVE_PTY = process.env.CLUI_INTERACTIVE_PERMISSIONS_PTY === '1'
@@ -142,7 +143,6 @@ function createWindow(): void {
     }
   })
 
-  let forceQuit = false
   app.on('before-quit', () => { forceQuit = true })
   mainWindow.on('close', (e) => {
     if (!forceQuit) {
@@ -347,13 +347,21 @@ ipcMain.handle(IPC.RESPOND_PERMISSION, (_event, { tabId, questionId, optionId }:
   return controlPlane.respondToPermission(tabId, questionId, optionId)
 })
 
+/** Encode a project path to match Claude Code CLI's session directory naming.
+ *  If the value is already an encoded dir name (starts with '-'), use it as-is. */
+function encodeProjectPath(pathOrEncoded: string): string {
+  // Already encoded (from LIST_ALL_SESSIONS results)
+  if (pathOrEncoded.startsWith('-') && !pathOrEncoded.includes('/')) return pathOrEncoded
+  return pathOrEncoded.replace(/[/_]/g, '-')
+}
+
 ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   log(`IPC LIST_SESSIONS ${projectPath ? `(path=${projectPath})` : ''}`)
   try {
     const cwd = projectPath || process.cwd()
     // Claude stores project sessions at ~/.claude/projects/<encoded-path>/
-    // Path encoding: replace all '/' with '-' (leading '/' becomes leading '-')
-    const encodedPath = cwd.replace(/\//g, '-')
+    // Path encoding: replace '/' and '_' with '-' (matching Claude Code CLI behavior)
+    const encodedPath = encodeProjectPath(cwd)
     const sessionsDir = join(homedir(), '.claude', 'projects', encodedPath)
     if (!existsSync(sessionsDir)) {
       log(`LIST_SESSIONS: directory not found: ${sessionsDir}`)
@@ -361,7 +369,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
     }
     const files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl'))
 
-    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number }> = []
+    const sessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string }> = []
 
     // UUID v4 regex — only consider files named as valid UUIDs
     const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
@@ -413,6 +421,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
           firstMessage: meta.firstMessage,
           lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
           size: stat.size,
+          projectPath: cwd,
         })
       }
     }
@@ -426,6 +435,87 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   }
 })
 
+// List sessions across ALL project directories
+ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
+  log('IPC LIST_ALL_SESSIONS')
+  try {
+    const projectsRoot = join(homedir(), '.claude', 'projects')
+    if (!existsSync(projectsRoot)) return []
+
+    const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+    const allSessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string }> = []
+
+    const projectDirs = readdirSync(projectsRoot).filter((d: string) => {
+      try { return statSync(join(projectsRoot, d)).isDirectory() } catch { return false }
+    })
+
+    for (const dir of projectDirs) {
+      const sessionsDir = join(projectsRoot, dir)
+      // The encoded dir name is the canonical project identifier.
+      // We store it as-is since decoding is lossy ('/' and '_' both encode to '-').
+      const encodedDir = dir
+
+      let files: string[]
+      try { files = readdirSync(sessionsDir).filter((f: string) => f.endsWith('.jsonl')) } catch { continue }
+
+      for (const file of files) {
+        const fileSessionId = file.replace(/\.jsonl$/, '')
+        if (!UUID_RE.test(fileSessionId)) continue
+
+        const filePath = join(sessionsDir, file)
+        let stat: ReturnType<typeof statSync>
+        try { stat = statSync(filePath) } catch { continue }
+        if (stat.size < 100) continue
+
+        const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null } = {
+          validated: false, slug: null, firstMessage: null, lastTimestamp: null,
+        }
+
+        await new Promise<void>((resolve) => {
+          const rl = createInterface({ input: createReadStream(filePath) })
+          rl.on('line', (line: string) => {
+            try {
+              const obj = JSON.parse(line)
+              if (!meta.validated && obj.type && obj.uuid && obj.timestamp) {
+                meta.validated = true
+              }
+              if (obj.slug && !meta.slug) meta.slug = obj.slug
+              if (obj.timestamp) meta.lastTimestamp = obj.timestamp
+              if (obj.type === 'user' && !meta.firstMessage) {
+                const content = obj.message?.content
+                if (typeof content === 'string') {
+                  meta.firstMessage = content.substring(0, 100)
+                } else if (Array.isArray(content)) {
+                  const textPart = content.find((p: any) => p.type === 'text')
+                  meta.firstMessage = textPart?.text?.substring(0, 100) || null
+                }
+              }
+            } catch {}
+          })
+          rl.on('close', () => resolve())
+        })
+
+        if (meta.validated) {
+          allSessions.push({
+            sessionId: fileSessionId,
+            slug: meta.slug,
+            firstMessage: meta.firstMessage,
+            lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
+            size: stat.size,
+            projectPath: encodedDir,
+          })
+        }
+      }
+    }
+
+    allSessions.sort((a, b) => new Date(b.lastTimestamp).getTime() - new Date(a.lastTimestamp).getTime())
+    return allSessions.slice(0, 30)
+  } catch (err) {
+    log(`LIST_ALL_SESSIONS error: ${err}`)
+    return []
+  }
+})
+
 // Load conversation history from a session's JSONL file
 ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPath?: string } | string) => {
   const sessionId = typeof arg === 'string' ? arg : arg.sessionId
@@ -433,11 +523,11 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   log(`IPC LOAD_SESSION ${sessionId}${projectPath ? ` (path=${projectPath})` : ''}`)
   try {
     const cwd = projectPath || process.cwd()
-    const encodedPath = cwd.replace(/\//g, '-')
+    const encodedPath = encodeProjectPath(cwd)
     const filePath = join(homedir(), '.claude', 'projects', encodedPath, `${sessionId}.jsonl`)
     if (!existsSync(filePath)) return []
 
-    const messages: Array<{ role: string; content: string; toolName?: string; timestamp: number }> = []
+    const messages: Array<{ role: string; content: string; toolName?: string; toolId?: string; timestamp: number }> = []
     await new Promise<void>((resolve) => {
       const rl = createInterface({ input: createReadStream(filePath) })
       rl.on('line', (line: string) => {
@@ -468,6 +558,7 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
                     role: 'tool',
                     content: '',
                     toolName: block.name,
+                    toolId: block.id || undefined,
                     timestamp: new Date(obj.timestamp).getTime(),
                   })
                 }
@@ -482,6 +573,93 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
   } catch (err) {
     log(`LOAD_SESSION error: ${err}`)
     return []
+  }
+})
+
+// Extract tool results from a session JSONL file
+// Returns a map of toolUseId → result text
+// Sources: tool_result blocks in user messages + progress events for subagent activity
+ipcMain.handle(IPC.GET_TOOL_RESULTS, async (_e, arg: { sessionId: string; projectPath: string }) => {
+  const { sessionId, projectPath } = arg
+  log(`IPC GET_TOOL_RESULTS ${sessionId}`)
+  try {
+    const encodedPath = encodeProjectPath(projectPath)
+    const filePath = join(homedir(), '.claude', 'projects', encodedPath, `${sessionId}.jsonl`)
+    if (!existsSync(filePath)) return {}
+
+    const results: Record<string, string> = {}
+    // Track progress events per parentToolUseID (subagent activity)
+    const progressByTool: Record<string, string[]> = {}
+
+    await new Promise<void>((resolve) => {
+      const rl = createInterface({ input: createReadStream(filePath) })
+      rl.on('line', (line: string) => {
+        try {
+          const obj = JSON.parse(line)
+
+          // Extract tool_result from user messages
+          if (obj.type === 'user') {
+            const content = obj.message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === 'tool_result' && block.tool_use_id) {
+                  const c = block.content
+                  if (typeof c === 'string') {
+                    results[block.tool_use_id] = c
+                  } else if (Array.isArray(c)) {
+                    const text = c
+                      .filter((b: any) => b.type === 'text')
+                      .map((b: any) => b.text)
+                      .join('\n')
+                    if (text) results[block.tool_use_id] = text
+                  }
+                }
+              }
+            }
+          }
+
+          // Extract progress events (subagent activity)
+          if (obj.type === 'progress' && obj.parentToolUseID) {
+            const ptid = obj.parentToolUseID
+            const msg = obj.data?.message
+            const content = msg?.message?.content
+            if (Array.isArray(content)) {
+              for (const block of content) {
+                if (block.type === 'text' && block.text) {
+                  if (!progressByTool[ptid]) progressByTool[ptid] = []
+                  progressByTool[ptid].push(block.text)
+                } else if (block.type === 'tool_use' && block.name) {
+                  if (!progressByTool[ptid]) progressByTool[ptid] = []
+                  const input = block.input || {}
+                  let detail = ''
+                  if (['Read', 'Edit', 'Write'].includes(block.name)) {
+                    detail = `: ${input.file_path || input.path || ''}`
+                  } else if (block.name === 'Bash') {
+                    detail = `: ${(input.command || '').toString().substring(0, 60)}`
+                  } else if (['Grep', 'Glob'].includes(block.name)) {
+                    detail = `: ${input.pattern || ''}`
+                  }
+                  progressByTool[ptid].push(`[${block.name}${detail}]`)
+                }
+              }
+            }
+          }
+        } catch {}
+      })
+      rl.on('close', () => resolve())
+    })
+
+    // For tool IDs without a tool_result but with progress data, use progress as fallback
+    for (const [toolId, parts] of Object.entries(progressByTool)) {
+      if (!results[toolId]) {
+        results[toolId] = parts.join('\n')
+      }
+    }
+
+    return results
+  } catch (err) {
+    log(`GET_TOOL_RESULTS error: ${err}`)
+    return {}
   }
 })
 
@@ -966,7 +1144,7 @@ app.whenReady().then(async () => {
     if (pendingUpdateVersion) {
       items.push({
         label: `Restart to update (v${pendingUpdateVersion})`,
-        click: () => autoUpdater.quitAndInstall(),
+        click: () => { forceQuit = true; autoUpdater.quitAndInstall() },
       })
     }
     items.push({ label: 'Quit', click: () => { app.quit() } })
@@ -999,6 +1177,7 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.CHECK_FOR_UPDATE, () => autoUpdater.checkForUpdates())
   ipcMain.handle(IPC.INSTALL_UPDATE, () => {
+    forceQuit = true
     autoUpdater.quitAndInstall()
   })
 
