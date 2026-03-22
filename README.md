@@ -1,12 +1,13 @@
-# Clui - Desktop UI for Claude Code
+# Clui - The better UI for Claude Code
 
-A lightweight, transparent desktop overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on macOS. Clui wraps the Claude Code CLI in a floating pill interface with multi-tab sessions, a permission approval UI, voice input, and a skills marketplace.
+> [!NOTE] 
+> This is a forked project from [Lucas Couto](https://github.com/lcoutodemos)'s [Clui CC](https://github.com/lcoutodemos/clui-cc) with some of my additions!
+
+It's a lightweight, transparent desktop overlay for [Claude Code](https://docs.anthropic.com/en/docs/claude-code) on macOS. Clui wraps the Claude Code CLI in a floating pill interface with multi-tab sessions, a permission approval UI, voice input, and a skills marketplace.
 
 ## Demo
 
 [![Watch the demo](https://img.youtube.com/vi/NqRBIpaA4Fk/maxresdefault.jpg)](https://www.youtube.com/watch?v=NqRBIpaA4Fk)
-
-<p align="center"><a href="https://www.youtube.com/watch?v=NqRBIpaA4Fk">▶ Watch the full demo on YouTube</a></p>
 
 ## Features
 
@@ -19,7 +20,8 @@ A lightweight, transparent desktop overlay for [Claude Code](https://docs.anthro
 - **File & screenshot attachments** - paste images or attach files directly.
 - **Dual theme** - dark/light mode with system-follow option.
 
-> **Note:** Clui is not yet notarized with Apple. macOS Gatekeeper may block the first launch. See the install sections below for the workaround. Notarization is coming soon.
+> [!IMPORTANT]
+> Clui is not yet notarized with Apple. macOS Gatekeeper may block the first launch. See the install sections below for the workaround. Notarization is coming soon.
 
 ## Install
 
@@ -97,6 +99,7 @@ npm run doctor
 - **macOS only** - transparent overlay, tray icon, and node-pty are macOS-specific.
 - **Requires Claude Code CLI** - Clui is a UI layer, not a standalone AI client.
 
-## License
-
-[MIT](LICENSE)
+## Q&A
+> Why didn't you just contribute to the original project ?
+>
+> > I just got excited about the project and at first wanted a better way to install it and keep up with its versions but I ended up using it and wanting to add some features so I figured I'd use it as a base conva to build on top!
