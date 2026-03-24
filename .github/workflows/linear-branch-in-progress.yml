@@ -97,10 +97,15 @@ jobs:
             fi
 
             # Link branch to issue as attachment
-            BRANCH_URL="https://github.com/${{ github.repository }}/tree/${{ github.event.ref }}"
+            BRANCH_REF="${{ github.event.ref }}"
+            BRANCH_URL="https://github.com/${{ github.repository }}/tree/$BRANCH_REF"
             echo "Linking branch to issue..."
 
-            echo "{\"query\": \"mutation { attachmentCreate(input: { issueId: \\\"$ISSUE_INTERNAL_ID\\\", url: \\\"$BRANCH_URL\\\", title: \\\"Branch: ${{ github.event.ref }}\\\" }) { success attachment { id url } } }\"}" > /tmp/query.json
+            jq -n \
+              --arg issueId "$ISSUE_INTERNAL_ID" \
+              --arg url "$BRANCH_URL" \
+              --arg title "Branch: $BRANCH_REF" \
+              '{query: ("mutation { attachmentCreate(input: { issueId: \"" + $issueId + "\", url: \"" + $url + "\", title: \"" + $title + "\" }) { success attachment { id url } } }")}' > /tmp/query.json
             ATTACHMENT_RESPONSE=$(curl -s -X POST "https://api.linear.app/graphql" \
               -H "Authorization: $LINEAR_API_KEY" \
               -H "Content-Type: application/json" \

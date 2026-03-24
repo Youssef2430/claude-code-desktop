@@ -25,6 +25,10 @@ export function useKeyboardShortcuts({
 }) {
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
+      // Ignore held-down repeats (prevents spam-creating tabs, etc.)
+      // and IME composition (prevents interfering with text input methods)
+      if (e.repeat || e.isComposing) return
+
       const meta = e.metaKey
       const shift = e.shiftKey
       const ctrl = e.ctrlKey

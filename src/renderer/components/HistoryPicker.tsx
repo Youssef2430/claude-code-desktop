@@ -59,10 +59,16 @@ export function HistoryPicker() {
   const [localOpen, setLocalOpen] = useState(false)
   const open = localOpen || historyPickerOpen
   const setOpen = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
-    const next = typeof v === 'function' ? v(localOpen) : v
-    setLocalOpen(next)
-    if (!next) closeHistoryPicker()
-  }, [localOpen, closeHistoryPicker])
+    setLocalOpen((prev) => {
+      const next = typeof v === 'function' ? (v as (prev: boolean) => boolean)(prev) : v
+      if (!next) closeHistoryPicker()
+      return next
+    })
+  }, [closeHistoryPicker])
+  // Sync local state when store closes externally (e.g. second Cmd+Shift+H press)
+  useEffect(() => {
+    if (!historyPickerOpen) setLocalOpen(false)
+  }, [historyPickerOpen])
   const [scope, setScope] = useState<HistoryScope>('all')
   const [sessions, setSessions] = useState<SessionMeta[]>([])
   const [loading, setLoading] = useState(false)
