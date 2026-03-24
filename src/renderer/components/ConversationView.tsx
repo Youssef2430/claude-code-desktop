@@ -8,6 +8,7 @@ import {
   SpinnerGap, ArrowCounterClockwise, Square,
   Brain, Lightning, ChatDots, HardDrives, Plugs, Archive, CircleDashed, Cpu,
   CurrencyDollar, Clock, ArrowsClockwise, CoinVertical,
+  CheckSquare, CheckCircle, Circle,
 } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
@@ -649,6 +650,12 @@ function getToolDescription(name: string, input?: string): string {
       case 'WebSearch': return `Search: ${parsed.query || parsed.search_query || ''}`
       case 'WebFetch': return `Fetch: ${parsed.url || ''}`
       case 'Agent': return `Agent: ${(parsed.prompt || parsed.description || '').substring(0, 50)}`
+      case 'TodoWrite': {
+        const items = Array.isArray(parsed.todos) ? parsed.todos : []
+        const done = items.filter((t: any) => t.status === 'completed').length
+        return `Update todos (${done}/${items.length} done)`
+      }
+      case 'TodoRead': return 'Read todos'
       default: return name
     }
   } catch {
@@ -894,9 +901,25 @@ function ToolGroup({ tools, skipMotion }: { tools: Message[]; skipMotion?: boole
 const CONTEXT_PREFIX = '__CONTEXT_DATA__'
 const CONTEXT_LOADING = '__CONTEXT_LOADING__'
 const COST_PREFIX = '__COST_DATA__'
+const TODO_PREFIX = '__TODO_DATA__'
 
 function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
+
+  // Todo card
+  const isTodo = message.content.startsWith(TODO_PREFIX)
+  if (isTodo) {
+    try {
+      const tasks = JSON.parse(message.content.slice(TODO_PREFIX.length)) as Array<{ id: string; subject: string; status: string; description?: string }>
+      const inner = <TodoCard tasks={tasks} colors={colors} />
+      if (skipMotion) return <div className="py-1">{inner}</div>
+      return (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="py-1">
+          {inner}
+        </motion.div>
+      )
+    } catch {}
+  }
 
   // Cost card
   const isCost = message.content.startsWith(COST_PREFIX)
@@ -985,6 +1008,80 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
       {inner}
     </motion.div>
   )
+}
+
+// ─── Todo Card ───
+
+interface TodoTaskDisplay {
+  id: string
+  subject: string
+  status: string
+  description?: string
+}
+
+function TodoCard({ tasks, colors }: { tasks: TodoTaskDisplay[]; colors: ReturnType<typeof useColors> }) {
+  const visible = tasks.filter((t) => t.status !== 'deleted')
+  const completedCount = visible.filter((t) => t.status === 'completed').length
+
+  return (
+    <div
+      className="rounded-lg overflow-hidden text-[12px] leading-[1.5]"
+      style={{
+        background: colors.surfacePrimary,
+        border: `1px solid ${colors.toolBorder}`,
+        maxWidth: '100%',
+      }}
+    >
+      {/* Header */}
+      <div
+        className="px-3 py-1.5 flex items-center gap-1.5 text-[11px]"
+        style={{ color: colors.textSecondary, borderBottom: `1px solid ${colors.toolBorder}` }}
+      >
+        <CheckSquare size={11} style={{ color: colors.accent }} />
+        <span className="font-medium">Tasks</span>
+        <span style={{ color: colors.textTertiary, marginLeft: 'auto' }}>
+          {completedCount}/{visible.length}
+        </span>
+      </div>
+
+      {/* Task list */}
+      <div className="px-3 py-2 space-y-[6px]">
+        {visible.length === 0 && (
+          <span style={{ color: colors.textTertiary, fontSize: 11 }}>No tasks yet</span>
+        )}
+        {visible.map((task) => (
+          <div key={task.id} className="flex items-start gap-2 min-w-0">
+            <TodoStatusIcon status={task.status} colors={colors} />
+            <span
+              className="text-[12px] leading-[1.4] min-w-0 flex-1"
+              style={{
+                color: task.status === 'completed' ? colors.textTertiary : colors.textSecondary,
+                textDecoration: task.status === 'completed' ? 'line-through' : 'none',
+                opacity: task.status === 'completed' ? 0.7 : 1,
+              }}
+            >
+              {task.subject}
+            </span>
+            {task.status === 'in_progress' && (
+              <SpinnerGap size={10} className="animate-spin flex-shrink-0 mt-[2px]" style={{ color: colors.statusRunning }} />
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function TodoStatusIcon({ status, colors }: { status: string; colors: ReturnType<typeof useColors> }) {
+  switch (status) {
+    case 'completed':
+      return <CheckCircle size={13} weight="fill" className="flex-shrink-0 mt-[2px]" style={{ color: colors.statusComplete }} />
+    case 'in_progress':
+      return <Circle size={13} weight="bold" className="flex-shrink-0 mt-[2px]" style={{ color: colors.statusRunning }} />
+    case 'pending':
+    default:
+      return <Circle size={13} className="flex-shrink-0 mt-[2px]" style={{ color: colors.textMuted }} />
+  }
 }
 
 // ─── Context Card (rich /context display) ───
@@ -1331,6 +1428,8 @@ function ToolIcon({ name, size = 12 }: { name: string; size?: number }) {
     WebFetch: <Globe size={size} />,
     Agent: <Robot size={size} />,
     AskUserQuestion: <Question size={size} />,
+    TodoWrite: <CheckSquare size={size} />,
+    TodoRead: <CheckSquare size={size} />,
   }
 
   return (
