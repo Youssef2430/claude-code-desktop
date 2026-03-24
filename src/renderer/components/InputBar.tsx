@@ -4,6 +4,7 @@ import { Microphone, ArrowUp, SpinnerGap, X, Check, Wrench, CheckCircle } from '
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
+import { FileMentionMenu, type FileMentionMenuHandle } from './FileMentionMenu'
 import { useColors } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
@@ -31,6 +32,9 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const [fixingWhisper, setFixingWhisper] = useState<'idle' | 'fixing' | 'done'>('idle')
   const [slashFilter, setSlashFilter] = useState<string | null>(null)
   const [slashIndex, setSlashIndex] = useState(0)
+  const [mentionFilter, setMentionFilter] = useState<string | null>(null)
+  const [mentionIndex, setMentionIndex] = useState(0)
+  const [mentionStart, setMentionStart] = useState<number>(-1)
   const [isMultiLine, setIsMultiLine] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
@@ -38,6 +42,8 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const mediaRecorderRef = useRef<MediaRecorder | null>(null)
   const chunksRef = useRef<Blob[]>([])
   const voiceToggleRef = useRef<() => void>(() => {})
+  const mentionMenuRef = useRef<FileMentionMenuHandle>(null)
+  const mentionCountRef = useRef(0)
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -68,6 +74,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const canSend = !!tab && !isConnecting && hasContent
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
+  const showMentionMenu = mentionFilter !== null && !isConnecting
   const skillCommands: SlashCommand[] = (tab?.sessionSkills || []).map((skill) => ({
     command: `/${skill}`,
     description: `Run skill: ${skill}`,
@@ -175,6 +182,96 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       setSlashFilter(null)
     }
   }, [])
+
+  // ─── @ mention detection ───
+  const updateMentionFilter = useCallback((value: string, cursorPos: number) => {
+    // Walk backwards from cursor to find an unescaped '@' preceded by space or at start
+    let atIdx = -1
+    for (let i = cursorPos - 1; i >= 0; i--) {
+      const ch = value[i]
+      if (ch === ' ' || ch === '\n') break // stop at whitespace before finding @
+      if (ch === '@') {
+        // Valid if at start of string or preceded by whitespace
+        if (i === 0 || value[i - 1] === ' ' || value[i - 1] === '\n') {
+          atIdx = i
+        }
+        break
+      }
+    }
+    if (atIdx >= 0) {
+      const filterText = value.slice(atIdx + 1, cursorPos)
+      // Only trigger if filter looks like a path (letters, digits, /, -, _, .)
+      if (/^[a-zA-Z0-9\/\-_.]*$/.test(filterText)) {
+        setMentionFilter(filterText)
+        setMentionStart(atIdx)
+        setMentionIndex(0)
+        return
+      }
+    }
+    setMentionFilter(null)
+    setMentionStart(-1)
+  }, [])
+
+  const handleMentionSelect = useCallback((path: string, isDirectory: boolean) => {
+    if (isDirectory) {
+      // Navigate into the directory — update the filter to show its contents
+      setMentionFilter(path)
+      setMentionIndex(0)
+      // Update the input text to reflect navigation
+      const before = input.slice(0, mentionStart + 1) // includes the '@'
+      const after = input.slice(mentionStart + 1 + (mentionFilter?.length ?? 0))
+      const newInput = before + path + after
+      setInput(newInput)
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          const newCursor = mentionStart + 1 + path.length
+          textareaRef.current.selectionStart = newCursor
+          textareaRef.current.selectionEnd = newCursor
+          textareaRef.current.focus()
+        }
+      })
+      return
+    }
+    // Insert file path and close menu
+    const before = input.slice(0, mentionStart)
+    const after = input.slice(mentionStart + 1 + (mentionFilter?.length ?? 0))
+    const newInput = before + '@' + path + ' ' + after
+    setInput(newInput)
+    setMentionFilter(null)
+    setMentionStart(-1)
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const newCursor = mentionStart + 1 + path.length + 1
+        textareaRef.current.selectionStart = newCursor
+        textareaRef.current.selectionEnd = newCursor
+        textareaRef.current.focus()
+      }
+    })
+  }, [input, mentionStart, mentionFilter])
+
+  const handleMentionGoBack = useCallback(() => {
+    const filter = mentionFilter ?? ''
+    // Strip trailing slash if present, then go up one level
+    const trimmed = filter.replace(/\/$/, '')
+    const lastSlash = trimmed.lastIndexOf('/')
+    const parentPrefix = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : ''
+
+    // Update input text to reflect the parent path
+    const before = input.slice(0, mentionStart + 1) // includes '@'
+    const after = input.slice(mentionStart + 1 + filter.length)
+    const newInput = before + parentPrefix + after
+    setInput(newInput)
+    setMentionFilter(parentPrefix)
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const newCursor = mentionStart + 1 + parentPrefix.length
+        textareaRef.current.selectionStart = newCursor
+        textareaRef.current.selectionEnd = newCursor
+        textareaRef.current.focus()
+      }
+    })
+  }, [input, mentionStart, mentionFilter])
 
   // ─── Handle slash commands ───
   const executeCommand = useCallback((cmd: SlashCommand) => {
@@ -358,6 +455,8 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     if (isConnecting) return
     setInput('')
     setSlashFilter(null)
+    setMentionFilter(null)
+    setMentionStart(-1)
     if (textareaRef.current) {
       textareaRef.current.style.height = `${INPUT_MIN_HEIGHT}px`
     }
@@ -368,6 +467,25 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
 
   // ─── Keyboard ───
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (showMentionMenu) {
+      const count = mentionCountRef.current
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i + 1) % count : 0); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i - 1 + count) % count : 0); return }
+      if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); handleMentionGoBack(); return }
+      if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); mentionMenuRef.current?.commitSelection(); return }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        // If inside a subdirectory, go back; otherwise close the menu
+        const filter = mentionFilter ?? ''
+        const hasDir = filter.includes('/')
+        if (hasDir) { handleMentionGoBack() } else { setMentionFilter(null); setMentionStart(-1) }
+        return
+      }
+      // Close mention menu on cursor movement keys that desync state
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+        setMentionFilter(null); setMentionStart(-1); return
+      }
+    }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
       if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIndex((i) => (i + 1) % filtered.length); return }
@@ -376,13 +494,15 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       if (e.key === 'Escape') { e.preventDefault(); setSlashFilter(null); return }
     }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
-    if (e.key === 'Escape' && !showSlashMenu) { window.clui.hideWindow() }
+    if (e.key === 'Escape' && !showSlashMenu && !showMentionMenu) { window.clui.hideWindow() }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
+    const cursorPos = e.target.selectionStart ?? value.length
     setInput(value)
     updateSlashFilter(value)
+    updateMentionFilter(value, cursorPos)
   }
 
   // ─── Paste image ───
@@ -475,6 +595,21 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
             onSelect={handleSlashSelect}
             anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
             extraCommands={skillCommands}
+          />
+        )}
+      </AnimatePresence>
+
+      {/* @ file mention menu */}
+      <AnimatePresence>
+        {showMentionMenu && (
+          <FileMentionMenu
+            ref={mentionMenuRef}
+            filter={mentionFilter!}
+            selectedIndex={mentionIndex}
+            onSelect={handleMentionSelect}
+            onFilteredCountChange={(count) => { mentionCountRef.current = count }}
+            anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
+            basePath={tab?.workingDirectory ?? ''}
           />
         )}
       </AnimatePresence>

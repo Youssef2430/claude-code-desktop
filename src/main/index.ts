@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences } from 'electron'
-import { join } from 'path'
+import { join, resolve, normalize } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { readdir } from 'fs/promises'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
@@ -929,6 +930,33 @@ ipcMain.handle(IPC.GET_CONTEXT, async (_e, arg: { sessionId: string; projectPath
   } catch (err) {
     log(`GET_CONTEXT error: ${err}`)
     return null
+  }
+})
+
+ipcMain.handle(IPC.LIST_DIR, async (_e, dirPath: string) => {
+  try {
+    // Normalize and resolve the path to prevent traversal attacks
+    const resolved = resolve(normalize(dirPath))
+    // Constrain to user's home directory
+    const home = homedir()
+    if (!resolved.startsWith(home)) return []
+    if (!existsSync(resolved)) return []
+
+    const entries = await readdir(resolved, { withFileTypes: true })
+    const results: Array<{ name: string; isDirectory: boolean }> = []
+    for (const entry of entries) {
+      // Skip hidden files/folders
+      if (entry.name.startsWith('.')) continue
+      results.push({ name: entry.name, isDirectory: entry.isDirectory() })
+    }
+    // Sort: directories first, then alphabetical
+    results.sort((a, b) => {
+      if (a.isDirectory !== b.isDirectory) return a.isDirectory ? -1 : 1
+      return a.name.localeCompare(b.name)
+    })
+    return results
+  } catch {
+    return []
   }
 })
 
