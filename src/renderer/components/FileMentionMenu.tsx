@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
+import React, { useEffect, useRef, useState, forwardRef, useImperativeHandle } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
 import {
@@ -130,30 +130,30 @@ export const FileMentionMenu = forwardRef<FileMentionMenuHandle, Props>(
     const colors = useColors()
     const [entries, setEntries] = useState<DirEntry[]>([])
     const [loading, setLoading] = useState(false)
+    const fetchIdRef = useRef(0)
 
     // Parse filter into directory prefix + name filter
     const lastSlash = filter.lastIndexOf('/')
     const dirPrefix = lastSlash >= 0 ? filter.slice(0, lastSlash + 1) : ''
     const nameFilter = lastSlash >= 0 ? filter.slice(lastSlash + 1) : filter
 
-    // Fetch directory listing when dirPrefix changes
-    const fetchDir = useCallback(async (prefix: string) => {
-      setLoading(true)
-      try {
-        const fullPath = prefix
-          ? `${basePath}/${prefix}`.replace(/\/+$/, '')
-          : basePath
-        const result = await window.clui.listDir(fullPath)
-        setEntries(result)
-      } catch {
-        setEntries([])
-      }
-      setLoading(false)
-    }, [basePath])
-
+    // Fetch directory listing when dirPrefix changes (with stale-request guard)
     useEffect(() => {
-      fetchDir(dirPrefix)
-    }, [dirPrefix, fetchDir])
+      const id = ++fetchIdRef.current
+      setLoading(true)
+      const fullPath = dirPrefix
+        ? `${basePath}/${dirPrefix}`.replace(/\/+$/, '')
+        : basePath
+      window.clui.listDir(fullPath).then((result) => {
+        if (fetchIdRef.current !== id) return // stale response, ignore
+        setEntries(result)
+        setLoading(false)
+      }).catch(() => {
+        if (fetchIdRef.current !== id) return
+        setEntries([])
+        setLoading(false)
+      })
+    }, [dirPrefix, basePath])
 
     // Filter entries by name
     const filtered = nameFilter

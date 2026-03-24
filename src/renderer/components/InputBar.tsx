@@ -43,6 +43,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const chunksRef = useRef<Blob[]>([])
   const voiceToggleRef = useRef<() => void>(() => {})
   const mentionMenuRef = useRef<FileMentionMenuHandle>(null)
+  const mentionCountRef = useRef(0)
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -200,7 +201,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     if (atIdx >= 0) {
       const filterText = value.slice(atIdx + 1, cursorPos)
       // Only trigger if filter looks like a path (letters, digits, /, -, _, .)
-      if (/^[a-zA-Z0-9\/\-_. ]*$/.test(filterText)) {
+      if (/^[a-zA-Z0-9\/\-_.]*$/.test(filterText)) {
         setMentionFilter(filterText)
         setMentionStart(atIdx)
         setMentionIndex(0)
@@ -443,10 +444,15 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   // ─── Keyboard ───
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showMentionMenu) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => i + 1); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => Math.max(0, i - 1)); return }
+      const count = mentionCountRef.current
+      if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i + 1) % count : 0); return }
+      if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i - 1 + count) % count : 0); return }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); mentionMenuRef.current?.commitSelection(); return }
       if (e.key === 'Escape') { e.preventDefault(); setMentionFilter(null); setMentionStart(-1); return }
+      // Close mention menu on cursor movement keys that desync state
+      if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
+        setMentionFilter(null); setMentionStart(-1); return
+      }
     }
     if (showSlashMenu) {
       const filtered = getFilteredCommandsWithExtras(slashFilter!, skillCommands)
@@ -569,6 +575,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
             filter={mentionFilter!}
             selectedIndex={mentionIndex}
             onSelect={handleMentionSelect}
+            onFilteredCountChange={(count) => { mentionCountRef.current = count }}
             anchorRect={wrapperRef.current?.getBoundingClientRect() ?? null}
             basePath={tab?.workingDirectory ?? ''}
           />

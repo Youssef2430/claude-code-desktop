@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences } from 'electron'
-import { join } from 'path'
+import { join, resolve, normalize } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { readdir } from 'fs/promises'
 import { createInterface } from 'readline'
 import { homedir } from 'os'
 import { ControlPlane } from './claude/control-plane'
@@ -934,8 +935,14 @@ ipcMain.handle(IPC.GET_CONTEXT, async (_e, arg: { sessionId: string; projectPath
 
 ipcMain.handle(IPC.LIST_DIR, async (_e, dirPath: string) => {
   try {
-    if (!existsSync(dirPath)) return []
-    const entries = readdirSync(dirPath, { withFileTypes: true })
+    // Normalize and resolve the path to prevent traversal attacks
+    const resolved = resolve(normalize(dirPath))
+    // Constrain to user's home directory
+    const home = homedir()
+    if (!resolved.startsWith(home)) return []
+    if (!existsSync(resolved)) return []
+
+    const entries = await readdir(resolved, { withFileTypes: true })
     const results: Array<{ name: string; isDirectory: boolean }> = []
     for (const entry of entries) {
       // Skip hidden files/folders
