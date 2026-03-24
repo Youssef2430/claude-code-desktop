@@ -933,7 +933,22 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
           {inner}
         </motion.div>
       )
-    } catch {}
+    } catch {
+      const fallback = (
+        <div
+          className="text-[11px] leading-[1.5] px-2.5 py-1 rounded-lg inline-block whitespace-pre-wrap"
+          style={{ background: colors.surfaceHover, color: colors.textTertiary }}
+        >
+          Cost data unavailable
+        </div>
+      )
+      if (skipMotion) return <div className="py-0.5">{fallback}</div>
+      return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.15 }} className="py-0.5">
+          {fallback}
+        </motion.div>
+      )
+    }
   }
 
   // Loading state for /context
@@ -1104,7 +1119,7 @@ function formatTokens(n: number): string {
 }
 
 function formatTokensWhole(n: number): string {
-  if (n >= 1000000) return `${Math.round(n / 1000)}k`
+  if (n >= 1000000) return `${Math.round(n / 1000000)}M`
   if (n >= 1000) return `${(n / 1000).toFixed(1)}k`
   return String(n)
 }
@@ -1138,21 +1153,54 @@ const GAUGE_ROWS = 4
 const TOTAL_CELLS = GAUGE_COLS * GAUGE_ROWS
 
 function buildGaugeCells(categories: ContextData['categories'], maxTokens: number): Array<{ color: string; isFree: boolean }> {
-  const cells: Array<{ color: string; isFree: boolean }> = []
+  if (maxTokens <= 0 || categories.length === 0) {
+    return Array.from({ length: TOTAL_CELLS }, () => ({ color: '#6b7280', isFree: true }))
+  }
+
+  // Largest-remainder allocation for stable rounding
+  const allocs = new Array(categories.length).fill(0)
+  const remainders = new Array(categories.length).fill(0)
+  let totalAlloc = 0
+
   for (let i = 0; i < categories.length; i++) {
-    const frac = maxTokens > 0 ? categories[i].tokens / maxTokens : 0
-    let count = Math.round(frac * TOTAL_CELLS)
-    if (categories[i].tokens > 0 && count === 0) count = 1
-    const style = getCategoryStyle(categories[i].label, i)
-    const isFree = categories[i].label === 'Free space'
-    for (let j = 0; j < count && cells.length < TOTAL_CELLS; j++) {
-      cells.push({ color: style.color, isFree })
+    const exact = (categories[i].tokens / maxTokens) * TOTAL_CELLS
+    let base = Math.floor(exact)
+    if (categories[i].tokens > 0 && base === 0) base = 1
+    allocs[i] = base
+    remainders[i] = exact - Math.floor(exact)
+    totalAlloc += base
+  }
+
+  let remaining = TOTAL_CELLS - totalAlloc
+  if (remaining > 0) {
+    const order = Array.from({ length: categories.length }, (_, i) => i)
+      .sort((a, b) => remainders[b] - remainders[a])
+    for (let idx = 0; remaining > 0 && idx < order.length; idx++) {
+      allocs[order[idx]]++
+      remaining--
+    }
+  } else if (remaining < 0) {
+    // Over-allocated (min-1 adjustments): remove from free space first, then smallest remainders
+    const order = Array.from({ length: categories.length }, (_, i) => i)
+      .sort((a, b) => {
+        const af = categories[a].label === 'Free space' ? 1 : 0
+        const bf = categories[b].label === 'Free space' ? 1 : 0
+        return af !== bf ? bf - af : remainders[a] - remainders[b]
+      })
+    for (let idx = 0; remaining < 0 && idx < order.length; idx++) {
+      if (allocs[order[idx]] > 0) { allocs[order[idx]]--; remaining++ }
     }
   }
-  // Fill remaining with free-space
-  while (cells.length < TOTAL_CELLS) {
-    cells.push({ color: '#6b7280', isFree: true })
+
+  const cells: Array<{ color: string; isFree: boolean }> = []
+  for (let i = 0; i < categories.length; i++) {
+    const style = getCategoryStyle(categories[i].label, i)
+    const isFree = categories[i].label === 'Free space'
+    for (let j = 0; j < allocs[i]; j++) cells.push({ color: style.color, isFree })
   }
+
+  // Guard: pad or trim to exactly TOTAL_CELLS
+  while (cells.length < TOTAL_CELLS) cells.push({ color: '#6b7280', isFree: true })
   return cells.slice(0, TOTAL_CELLS)
 }
 
