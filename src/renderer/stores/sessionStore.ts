@@ -110,11 +110,16 @@ function parseTodoWriteInput(input: Record<string, unknown>): Record<string, Tod
     const item = items[i]
     if (!item || typeof item !== 'object') continue
     const id = String(item.id ?? i + 1)
+    const VALID_STATUSES = new Set(['pending', 'in_progress', 'completed', 'deleted'])
+    const rawStatus = typeof item.status === 'string' ? item.status : ''
+    const status: TodoTask['status'] = VALID_STATUSES.has(rawStatus)
+      ? (rawStatus as TodoTask['status'])
+      : 'pending'
     todos[id] = {
       id,
       subject: String(item.content || item.subject || item.title || ''),
       description: item.description ? String(item.description) : undefined,
-      status: (item.status as TodoTask['status']) || 'pending',
+      status,
     }
   }
   return todos
@@ -770,17 +775,15 @@ export const useSessionStore = create<State>((set, get) => ({
                 updated.todos = parseTodoWriteInput(input)
               }
 
-              // Only inject/update the card if there are visible tasks
+              // Inject, update, or remove the TodoCard based on visible tasks
               const visibleTasks = Object.values(updated.todos).filter((t) => t.status !== 'deleted')
               if (visibleTasks.length > 0) {
                 const todoContent = buildTodoContent(updated.todos)
                 if (updated.todoMessageId) {
-                  // Update existing TodoCard message in-place
                   updated.messages = updated.messages.map((m) =>
                     m.id === updated.todoMessageId ? { ...m, content: todoContent } : m
                   )
                 } else {
-                  // Inject new TodoCard system message after the current tool
                   const newMsg: Message = {
                     id: nextMsgId(),
                     role: 'system',
@@ -790,6 +793,10 @@ export const useSessionStore = create<State>((set, get) => ({
                   updated.messages = [...updated.messages, newMsg]
                   updated.todoMessageId = newMsg.id
                 }
+              } else if (updated.todoMessageId) {
+                // No visible tasks remain — remove stale TodoCard
+                updated.messages = updated.messages.filter((m) => m.id !== updated.todoMessageId)
+                updated.todoMessageId = null
               }
             }
             break

@@ -170,7 +170,7 @@ export interface TabState {
   hasChosenDirectory: boolean
   /** Extra directories accessible via --add-dir (session-preserving) */
   additionalDirs: string[]
-  /** Live todo/task state built from TaskCreate/TaskUpdate tool calls */
+  /** Live todo/task state built from TodoWrite tool completions */
   todos: Record<string, TodoTask>
   /** Message ID of the injected TodoCard system message, updated in-place */
   todoMessageId: string | null

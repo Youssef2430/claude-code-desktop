@@ -910,7 +910,9 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
   const isTodo = message.content.startsWith(TODO_PREFIX)
   if (isTodo) {
     try {
-      const tasks = JSON.parse(message.content.slice(TODO_PREFIX.length)) as Array<{ id: string; subject: string; status: string; description?: string }>
+      const parsed = JSON.parse(message.content.slice(TODO_PREFIX.length))
+      if (!Array.isArray(parsed)) throw new Error('invalid todo payload')
+      const tasks = parsed as Array<{ id: string; subject: string; status: string; description?: string }>
       const inner = <TodoCard tasks={tasks} colors={colors} />
       if (skipMotion) return <div className="py-1">{inner}</div>
       return (
