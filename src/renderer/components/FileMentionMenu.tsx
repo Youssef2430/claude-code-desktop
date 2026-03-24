@@ -1,7 +1,15 @@
 import React, { useEffect, useRef, useState, useCallback, forwardRef, useImperativeHandle } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { FolderSimple, File, ArrowLeft } from '@phosphor-icons/react'
+import {
+  FolderSimple, File, ArrowLeft,
+  FileTs, FileTsx, FileJs, FileJsx, FileHtml, FileCss,
+  FilePy, FileRs, FileCpp, FileC, FileCSharp, FileSql, FileVue,
+  FileMd, FileDoc, FilePdf, FileTxt, FileCsv, FileXls, FilePpt,
+  FileImage, FileJpg, FilePng, FileSvg,
+  FileVideo, FileAudio, FileZip, FileCode, FileIni,
+  Terminal, Gear, Lock, Package, Database, Globe,
+} from '@phosphor-icons/react'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
 
@@ -19,6 +27,95 @@ interface Props {
   anchorRect: DOMRect | null
   /** The tab's working directory (absolute path) */
   basePath: string
+}
+
+const ICON_SIZE = 13
+
+/** Map file extension → Phosphor icon component + optional color hint */
+function getFileIcon(filename: string): React.ReactNode {
+  const ext = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : ''
+  const name = filename.toLowerCase()
+
+  // Config / dotfiles by name
+  if (name === 'package.json' || name === 'package-lock.json') return <Package size={ICON_SIZE} />
+  if (name === 'dockerfile' || name === 'docker-compose.yml' || name === 'docker-compose.yaml') return <Database size={ICON_SIZE} />
+  if (name === 'license' || name === 'license.md') return <Lock size={ICON_SIZE} />
+  if (name === '.gitignore' || name === '.gitattributes') return <Gear size={ICON_SIZE} />
+  if (name === '.env' || name === '.env.local' || name === '.env.production') return <Lock size={ICON_SIZE} />
+  if (name === 'makefile' || name === 'cmakelists.txt') return <Terminal size={ICON_SIZE} />
+  if (name === 'tsconfig.json' || name === 'jsconfig.json') return <Gear size={ICON_SIZE} />
+
+  switch (ext) {
+    // TypeScript / JavaScript
+    case 'ts': return <FileTs size={ICON_SIZE} />
+    case 'tsx': return <FileTsx size={ICON_SIZE} />
+    case 'js': return <FileJs size={ICON_SIZE} />
+    case 'jsx': return <FileJsx size={ICON_SIZE} />
+    case 'mjs': case 'cjs': return <FileJs size={ICON_SIZE} />
+
+    // Web
+    case 'html': case 'htm': return <FileHtml size={ICON_SIZE} />
+    case 'css': case 'scss': case 'sass': case 'less': return <FileCss size={ICON_SIZE} />
+    case 'vue': return <FileVue size={ICON_SIZE} />
+
+    // Data / Config
+    case 'json': case 'jsonc': case 'json5': return <FileCode size={ICON_SIZE} />
+    case 'yaml': case 'yml': return <FileIni size={ICON_SIZE} />
+    case 'toml': case 'ini': case 'cfg': case 'conf': return <FileIni size={ICON_SIZE} />
+    case 'xml': return <FileCode size={ICON_SIZE} />
+    case 'env': return <Lock size={ICON_SIZE} />
+    case 'csv': return <FileCsv size={ICON_SIZE} />
+    case 'sql': return <FileSql size={ICON_SIZE} />
+    case 'db': case 'sqlite': case 'sqlite3': return <Database size={ICON_SIZE} />
+
+    // Languages
+    case 'py': case 'pyi': case 'pyx': return <FilePy size={ICON_SIZE} />
+    case 'rs': return <FileRs size={ICON_SIZE} />
+    case 'cpp': case 'cc': case 'cxx': case 'hpp': return <FileCpp size={ICON_SIZE} />
+    case 'c': case 'h': return <FileC size={ICON_SIZE} />
+    case 'cs': return <FileCSharp size={ICON_SIZE} />
+    case 'go': case 'java': case 'kt': case 'scala': case 'swift': case 'rb': case 'php':
+    case 'r': case 'lua': case 'zig': case 'ex': case 'exs': case 'erl': case 'hs':
+    case 'clj': case 'cljs': case 'lisp': case 'el': case 'dart': case 'nim':
+      return <FileCode size={ICON_SIZE} />
+
+    // Shell / scripts
+    case 'sh': case 'bash': case 'zsh': case 'fish': case 'bat': case 'cmd': case 'ps1':
+      return <Terminal size={ICON_SIZE} />
+
+    // Docs
+    case 'md': case 'mdx': return <FileMd size={ICON_SIZE} />
+    case 'txt': case 'text': case 'log': return <FileTxt size={ICON_SIZE} />
+    case 'pdf': return <FilePdf size={ICON_SIZE} />
+    case 'doc': case 'docx': case 'rtf': return <FileDoc size={ICON_SIZE} />
+    case 'xls': case 'xlsx': return <FileXls size={ICON_SIZE} />
+    case 'ppt': case 'pptx': return <FilePpt size={ICON_SIZE} />
+
+    // Images
+    case 'jpg': case 'jpeg': return <FileJpg size={ICON_SIZE} />
+    case 'png': return <FilePng size={ICON_SIZE} />
+    case 'svg': return <FileSvg size={ICON_SIZE} />
+    case 'gif': case 'webp': case 'ico': case 'bmp': case 'tiff': case 'avif':
+      return <FileImage size={ICON_SIZE} />
+
+    // Media
+    case 'mp4': case 'webm': case 'avi': case 'mov': case 'mkv': case 'flv':
+      return <FileVideo size={ICON_SIZE} />
+    case 'mp3': case 'wav': case 'ogg': case 'flac': case 'aac': case 'm4a':
+      return <FileAudio size={ICON_SIZE} />
+
+    // Archives
+    case 'zip': case 'tar': case 'gz': case 'bz2': case 'xz': case '7z': case 'rar':
+      return <FileZip size={ICON_SIZE} />
+
+    // Lock files
+    case 'lock': return <Lock size={ICON_SIZE} />
+
+    // Web manifest
+    case 'wasm': return <Globe size={ICON_SIZE} />
+
+    default: return <File size={ICON_SIZE} />
+  }
 }
 
 export interface FileMentionMenuHandle {
@@ -190,7 +287,7 @@ export const FileMentionMenu = forwardRef<FileMentionMenuHandle, Props>(
                           : colors.textTertiary,
                     }}
                   >
-                    {entry.isDirectory ? <FolderSimple size={13} weight="fill" /> : <File size={13} />}
+                    {entry.isDirectory ? <FolderSimple size={ICON_SIZE} weight="fill" /> : getFileIcon(entry.name)}
                   </span>
                   <div className="min-w-0 flex-1 flex items-center">
                     <span
