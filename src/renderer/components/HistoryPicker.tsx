@@ -54,7 +54,21 @@ export function HistoryPicker() {
     ? activeTab.workingDirectory
     : (staticInfo?.homePath || activeTab?.workingDirectory || '~')
 
-  const [open, setOpen] = useState(false)
+  const historyPickerOpen = useSessionStore((s) => s.historyPickerOpen)
+  const closeHistoryPicker = useSessionStore((s) => s.closeHistoryPicker)
+  const [localOpen, setLocalOpen] = useState(false)
+  const open = localOpen || historyPickerOpen
+  const setOpen = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
+    setLocalOpen((prev) => {
+      const next = typeof v === 'function' ? (v as (prev: boolean) => boolean)(prev) : v
+      if (!next) closeHistoryPicker()
+      return next
+    })
+  }, [closeHistoryPicker])
+  // Sync local state when store closes externally (e.g. second Cmd+Shift+H press)
+  useEffect(() => {
+    if (!historyPickerOpen) setLocalOpen(false)
+  }, [historyPickerOpen])
   const [scope, setScope] = useState<HistoryScope>('all')
   const [sessions, setSessions] = useState<SessionMeta[]>([])
   const [loading, setLoading] = useState(false)
@@ -92,6 +106,15 @@ export function HistoryPicker() {
     }
     setLoading(false)
   }, [effectiveProjectPath])
+
+  // Respond to external toggle (Cmd+Shift+H)
+  useEffect(() => {
+    if (historyPickerOpen && !localOpen) {
+      updatePos()
+      void loadSessions(scope)
+      setLocalOpen(true)
+    }
+  }, [historyPickerOpen, localOpen, updatePos, loadSessions, scope])
 
   useEffect(() => {
     if (!open) return
