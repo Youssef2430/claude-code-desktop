@@ -249,6 +249,30 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     })
   }, [input, mentionStart, mentionFilter])
 
+  const handleMentionGoBack = useCallback(() => {
+    const filter = mentionFilter ?? ''
+    // Strip trailing slash if present, then go up one level
+    const trimmed = filter.replace(/\/$/, '')
+    const lastSlash = trimmed.lastIndexOf('/')
+    const parentPrefix = lastSlash >= 0 ? trimmed.slice(0, lastSlash + 1) : ''
+
+    // Update input text to reflect the parent path
+    const before = input.slice(0, mentionStart + 1) // includes '@'
+    const after = input.slice(mentionStart + 1 + filter.length)
+    const newInput = before + parentPrefix + after
+    setInput(newInput)
+    setMentionFilter(parentPrefix)
+    setMentionIndex(0)
+    requestAnimationFrame(() => {
+      if (textareaRef.current) {
+        const newCursor = mentionStart + 1 + parentPrefix.length
+        textareaRef.current.selectionStart = newCursor
+        textareaRef.current.selectionEnd = newCursor
+        textareaRef.current.focus()
+      }
+    })
+  }, [input, mentionStart, mentionFilter])
+
   // ─── Handle slash commands ───
   const executeCommand = useCallback((cmd: SlashCommand) => {
     switch (cmd.command) {
@@ -447,8 +471,16 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       const count = mentionCountRef.current
       if (e.key === 'ArrowDown') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i + 1) % count : 0); return }
       if (e.key === 'ArrowUp') { e.preventDefault(); setMentionIndex((i) => count > 0 ? (i - 1 + count) % count : 0); return }
+      if (e.key === 'Tab' && e.shiftKey) { e.preventDefault(); handleMentionGoBack(); return }
       if (e.key === 'Tab' || (e.key === 'Enter' && !e.shiftKey)) { e.preventDefault(); mentionMenuRef.current?.commitSelection(); return }
-      if (e.key === 'Escape') { e.preventDefault(); setMentionFilter(null); setMentionStart(-1); return }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        // If inside a subdirectory, go back; otherwise close the menu
+        const filter = mentionFilter ?? ''
+        const hasDir = filter.includes('/')
+        if (hasDir) { handleMentionGoBack() } else { setMentionFilter(null); setMentionStart(-1) }
+        return
+      }
       // Close mention menu on cursor movement keys that desync state
       if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
         setMentionFilter(null); setMentionStart(-1); return
