@@ -832,39 +832,47 @@ export class ControlPlane extends EventEmitter {
     onDone: () => void,
     onError: (msg: string) => void,
   ): void {
+    // Guard: task_complete and exit can both fire — only call onDone/onError once
+    let settled = false
+
     const cleanup = () => {
       this.runManager.removeListener('normalized', onNormalized)
       this.runManager.removeListener('exit', onExit)
       this.runManager.removeListener('error', onRunError)
     }
 
+    const settle = (cb: () => void) => {
+      if (settled) return
+      settled = true
+      cleanup()
+      cb()
+    }
+
     const onNormalized = (requestId: string, event: NormalizedEvent) => {
       if (requestId !== btwId) return
       if (event.type === 'text_chunk') {
-        onChunk(event.text)
+        if (!event.parentToolUseId) onChunk(event.text)
       } else if (event.type === 'task_complete') {
-        cleanup()
-        onDone()
+        settle(() => onDone())
       } else if (event.type === 'error') {
-        cleanup()
-        onError(event.message)
+        settle(() => onError(event.message))
       }
     }
 
     const onExit = (requestId: string, code: number | null) => {
       if (requestId !== btwId) return
-      cleanup()
-      if (code !== 0 && code !== null) {
-        onError(`Process exited with code ${code}`)
-      } else {
-        onDone()
-      }
+      settle(() => {
+        if (code !== 0 && code !== null) {
+          onError(`Process exited with code ${code}`)
+        } else {
+          onDone()
+        }
+      })
     }
 
     const onRunError = (requestId: string, err: Error) => {
       if (requestId !== btwId) return
-      cleanup()
-      onError(err.message)
+      settle(() => onError(err.message))
     }
 
     this.runManager.on('normalized', onNormalized)
@@ -875,8 +883,7 @@ export class ControlPlane extends EventEmitter {
       this.runManager.startRun(btwId, options)
       log(`BTW run started: ${btwId}`)
     } catch (err) {
-      cleanup()
-      onError((err as Error).message)
+      settle(() => onError((err as Error).message))
     }
   }
 

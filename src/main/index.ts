@@ -312,22 +312,33 @@ ipcMain.handle(IPC.BTW_PROMPT, async (_event, opts: BtwOptions) => {
   const BTW_SYSTEM_PROMPT = [
     '<system-reminder>',
     'Answer this side question immediately without using any tools.',
-    'Base your response only on what you already know from the conversation context.',
+    'Base your response only on what you already know.',
+    'If you would need a tool to answer, just say so briefly.',
+    'Keep your answer concise.',
     '</system-reminder>',
   ].join(' ')
+
+  // Use a temp directory so the btw session isn't saved
+  // alongside the user's real project sessions.
+  const { mkdtempSync, rmSync } = require('fs')
+  const { tmpdir } = require('os')
+  const btwDir = mkdtempSync(join(tmpdir(), 'clui-btw-'))
+
+  const cleanupBtwDir = () => {
+    try { rmSync(btwDir, { recursive: true, force: true }) } catch {}
+  }
 
   controlPlane.startBtwRun(
     opts.btwId,
     {
       prompt: opts.question,
-      projectPath: opts.projectPath,
-      sessionId: opts.sessionId || undefined,
+      projectPath: btwDir,
       maxTurns: 1,
       systemPrompt: BTW_SYSTEM_PROMPT,
     },
     (text) => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'chunk', text }),
-    ()     => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'done' }),
-    (msg)  => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'error', errorMessage: msg }),
+    ()     => { broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'done' }); cleanupBtwDir() },
+    (msg)  => { broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'error', errorMessage: msg }); cleanupBtwDir() },
   )
 })
 

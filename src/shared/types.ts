@@ -229,7 +229,6 @@ export type NormalizedEvent =
 export interface BtwOptions {
   btwId: string
   question: string
-  sessionId: string
   projectPath: string
 }
 

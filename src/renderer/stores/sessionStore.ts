@@ -706,11 +706,10 @@ export const useSessionStore = create<State>((set, get) => ({
     window.clui.btwPrompt({
       btwId,
       question,
-      sessionId: tab.claudeSessionId || '',
       projectPath: tab.workingDirectory,
     }).catch(() => {
       set((s) => s.btwState?.btwId === btwId
-        ? { btwState: { ...s.btwState!, status: 'error' as const, errorMessage: 'Failed to start side question' } }
+        ? { btwState: { ...s.btwState!, status: 'error' as const, errorMessage: 'Failed to start' } }
         : {}
       )
     })
@@ -732,18 +731,14 @@ export const useSessionStore = create<State>((set, get) => ({
   setBtwDone: (btwId) => {
     set((s) => {
       if (!s.btwState || s.btwState.btwId !== btwId) return {}
-      return {
-        btwState: { ...s.btwState, status: 'done' as const },
-      }
+      return { btwState: { ...s.btwState, status: 'done' as const } }
     })
   },
 
   setBtwError: (btwId, message) => {
     set((s) => {
       if (!s.btwState || s.btwState.btwId !== btwId) return {}
-      return {
-        btwState: { ...s.btwState, status: 'error' as const, errorMessage: message },
-      }
+      return { btwState: { ...s.btwState, status: 'error' as const, errorMessage: message } }
     })
   },
 
