@@ -11,7 +11,7 @@ import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { autoUpdater } from 'electron-updater'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, EnrichedError } from '../shared/types'
+import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -304,6 +304,31 @@ ipcMain.handle(IPC.PROMPT, async (_event, { tabId, requestId, options }: { tabId
     log(`PROMPT error: ${msg}`)
     throw err
   }
+})
+
+ipcMain.handle(IPC.BTW_PROMPT, async (_event, opts: BtwOptions) => {
+  log(`IPC BTW_PROMPT: btwId=${opts.btwId}`)
+
+  const BTW_SYSTEM_PROMPT = [
+    '<system-reminder>',
+    'Answer this side question immediately without using any tools.',
+    'Base your response only on what you already know from the conversation context.',
+    '</system-reminder>',
+  ].join(' ')
+
+  controlPlane.startBtwRun(
+    opts.btwId,
+    {
+      prompt: opts.question,
+      projectPath: opts.projectPath,
+      sessionId: opts.sessionId || undefined,
+      maxTurns: 1,
+      systemPrompt: BTW_SYSTEM_PROMPT,
+    },
+    (text) => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'chunk', text }),
+    ()     => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'done' }),
+    (msg)  => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'error', errorMessage: msg }),
+  )
 })
 
 ipcMain.handle(IPC.CANCEL, (_event, requestId: string) => {

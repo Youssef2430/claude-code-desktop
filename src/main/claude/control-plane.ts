@@ -818,6 +818,68 @@ export class ControlPlane extends EventEmitter {
     this.emit('tab-status-change', tabId, newStatus, oldStatus)
   }
 
+  // ─── BTW Side Question ───
+
+  /**
+   * Start a lightweight btw (side question) run that bypasses the tab
+   * state machine entirely. Uses the RunManager directly with scoped
+   * listeners so the main conversation is never interrupted.
+   */
+  startBtwRun(
+    btwId: string,
+    options: RunOptions,
+    onChunk: (text: string) => void,
+    onDone: () => void,
+    onError: (msg: string) => void,
+  ): void {
+    const cleanup = () => {
+      this.runManager.removeListener('normalized', onNormalized)
+      this.runManager.removeListener('exit', onExit)
+      this.runManager.removeListener('error', onRunError)
+    }
+
+    const onNormalized = (requestId: string, event: NormalizedEvent) => {
+      if (requestId !== btwId) return
+      if (event.type === 'text_chunk') {
+        onChunk(event.text)
+      } else if (event.type === 'task_complete') {
+        cleanup()
+        onDone()
+      } else if (event.type === 'error') {
+        cleanup()
+        onError(event.message)
+      }
+    }
+
+    const onExit = (requestId: string, code: number | null) => {
+      if (requestId !== btwId) return
+      cleanup()
+      if (code !== 0 && code !== null) {
+        onError(`Process exited with code ${code}`)
+      } else {
+        onDone()
+      }
+    }
+
+    const onRunError = (requestId: string, err: Error) => {
+      if (requestId !== btwId) return
+      cleanup()
+      onError(err.message)
+    }
+
+    this.runManager.on('normalized', onNormalized)
+    this.runManager.on('exit', onExit)
+    this.runManager.on('error', onRunError)
+
+    try {
+      this.runManager.startRun(btwId, options)
+      log(`BTW run started: ${btwId}`)
+    } catch (err) {
+      cleanup()
+      onError((err as Error).message)
+    }
+  }
+
   // ─── Shutdown ───
 
   shutdown(): void {
