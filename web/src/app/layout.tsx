@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { DM_Mono } from 'next/font/google'
+import { Analytics } from '@vercel/analytics/next'
 import './globals.css'
 
 const dmMono = DM_Mono({
@@ -40,6 +41,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       </head>
       <body className={dmMono.variable}>
         {children}
+        <Analytics />
       </body>
     </html>
   )
