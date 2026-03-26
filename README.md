@@ -23,7 +23,15 @@ It's a lightweight, transparent desktop overlay for [Claude Code](https://docs.a
 
 ## Install
 
-### Homebrew (Recommended)
+### Website
+
+Visit **[clui.app](https://clui.app)** to install via Homebrew or download the `.dmg` directly — it auto-detects your Mac's architecture.
+
+<a href="https://clui.app">
+  <img src="resources/web-preview.png" alt="Clui website" width="600" />
+</a>
+
+### Homebrew
 
 ```bash
 brew install --cask Youssef2430/clui/clui
