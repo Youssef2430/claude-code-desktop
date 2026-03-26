@@ -55,8 +55,10 @@ export default function DownloadAside({ arm64Url, x64Url }: Props) {
 
         <div className="download-aside-links">
           <a
-            href={arm64Url}
-            className={`download-link${arch === 'arm64' ? ' recommended' : ''}`}
+            href={arm64Url || undefined}
+            aria-disabled={!arm64Url || undefined}
+            onClick={arm64Url ? undefined : (e) => e.preventDefault()}
+            className={`download-link${arch === 'arm64' ? ' recommended' : ''}${!arm64Url ? ' disabled' : ''}`}
           >
             <svg viewBox="0 0 24 24" className="download-icon" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -71,8 +73,10 @@ export default function DownloadAside({ arm64Url, x64Url }: Props) {
           </a>
 
           <a
-            href={x64Url}
-            className={`download-link${arch === 'x64' ? ' recommended' : ''}`}
+            href={x64Url || undefined}
+            aria-disabled={!x64Url || undefined}
+            onClick={x64Url ? undefined : (e) => e.preventDefault()}
+            className={`download-link${arch === 'x64' ? ' recommended' : ''}${!x64Url ? ' disabled' : ''}`}
           >
             <svg viewBox="0 0 24 24" className="download-icon" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />

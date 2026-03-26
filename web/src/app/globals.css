@@ -339,7 +339,8 @@ body::before {
   text-decoration: none; cursor: pointer;
   transition: border-color .2s, background .2s, transform .22s var(--ease-out);
 }
-.download-link:hover { border-color: var(--text-soft); transform: translateY(-1px); }
+.download-link:hover:not(.disabled) { border-color: var(--text-soft); transform: translateY(-1px); }
+.download-link.disabled { opacity: .4; cursor: not-allowed; }
 .download-link.recommended { border-color: var(--accent); background: rgba(204,120,92,.06); }
 [data-theme="dark"] .download-link.recommended { background: rgba(204,120,92,.08); }
 .download-icon { width: 18px; height: 18px; flex-shrink: 0; color: var(--text-mid); transition: color .2s; }
@@ -349,8 +350,7 @@ body::before {
 .download-link-arch { font-family: var(--mono); font-size: 10.5px; color: var(--text-soft); transition: color .4s ease; }
 .download-badge { margin-left: auto; font-family: var(--sans); font-size: 9.5px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); background: rgba(204,120,92,.1); padding: 3px 8px; border-radius: 20px; white-space: nowrap; }
 
-.download-aside-note { font-family: var(--body); font-size: 11.5px; color: var(--text-soft); margin-top: 16px; line-height: 1.5; transition: color .4s ease; }
-.download-aside-note  { font-family: var(--sans); }
+.download-aside-note { font-family: var(--sans); font-size: 11.5px; color: var(--text-soft); margin-top: 16px; line-height: 1.5; transition: color .4s ease; }
 
 /* ─── Callout ────────────────────────────────────────────────── */
 .callout-inner { border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 72px 56px; text-align: center; position: relative; overflow: hidden; background: var(--bg-card); transition: background .4s ease, border-color .4s ease; }

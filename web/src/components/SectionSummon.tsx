@@ -8,6 +8,8 @@ export default function SectionSummon() {
   const spaceRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
+    let intervalId: ReturnType<typeof setInterval> | undefined
+
     function pressKeys() {
       optRef.current?.classList.add('pressed')
       spaceRef.current?.classList.add('pressed')
@@ -16,12 +18,16 @@ export default function SectionSummon() {
         spaceRef.current?.classList.remove('pressed')
       }, 380)
     }
-    const initial = setTimeout(() => {
+
+    const initialId = setTimeout(() => {
       pressKeys()
-      const interval = setInterval(pressKeys, 3000)
-      return () => clearInterval(interval)
+      intervalId = setInterval(pressKeys, 3000)
     }, 1500)
-    return () => clearTimeout(initial)
+
+    return () => {
+      clearTimeout(initialId)
+      if (intervalId) clearInterval(intervalId)
+    }
   }, [])
 
   return (

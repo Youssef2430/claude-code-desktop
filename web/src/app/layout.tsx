@@ -19,8 +19,16 @@ const themeScript = `
 (function(){
   var stored = null;
   try { stored = localStorage.getItem('clui-theme'); } catch(e){}
-  var sys = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  var media = window.matchMedia('(prefers-color-scheme: dark)');
+  var sys = media.matches ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', stored || sys);
+  if (!stored) {
+    media.addEventListener('change', function(e) {
+      if (!localStorage.getItem('clui-theme')) {
+        document.documentElement.setAttribute('data-theme', e.matches ? 'dark' : 'light');
+      }
+    });
+  }
 })();
 `
 
