@@ -2,10 +2,13 @@ import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import rehypeKatex from 'rehype-katex'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
 
-const REMARK_PLUGINS = [remarkGfm]
+const REMARK_PLUGINS = [remarkGfm, remarkMath]
+const REHYPE_PLUGINS = [rehypeKatex]
 const TRANSITION = { duration: 0.18, ease: [0.4, 0, 0.1, 1] as const }
 
 // ─── Claude Code Spinner: 12-frame palindrome at 120ms ───
@@ -209,7 +212,7 @@ export function BtwBubble() {
             {/* Streamed response */}
             {btwState.responseText && (
               <div className="text-[13px] leading-[1.6] prose-cloud min-w-0" style={{ color: colors.textPrimary }}>
-                <Markdown remarkPlugins={REMARK_PLUGINS}>
+                <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
                   {btwState.responseText}
                 </Markdown>
               </div>
