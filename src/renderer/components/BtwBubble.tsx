@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState, useMemo } from 'react'
+import React, { useCallback, useEffect, useRef, useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
@@ -85,6 +85,7 @@ export function BtwBubble() {
   const dismissBtw = useSessionStore((s) => s.dismissBtw)
   const colors = useColors()
   const scrollRef = useRef<HTMLDivElement>(null)
+  const isNearBottomRef = useRef(true)
 
   const isLoading = btwState?.status === 'loading' || btwState?.status === 'streaming'
   const showLoader = !!isLoading && !btwState?.responseText
@@ -107,9 +108,16 @@ export function BtwBubble() {
     return colors.accent
   }, [colors.accent])
 
-  // Auto-scroll as response streams in
+  // Track whether user is scrolled near the bottom (mirrors ConversationView)
+  const handleScroll = useCallback(() => {
+    const el = scrollRef.current
+    if (!el) return
+    isNearBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 60
+  }, [])
+
+  // Auto-scroll as response streams in, only when near bottom
   useEffect(() => {
-    if (scrollRef.current) {
+    if (isNearBottomRef.current && scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight
     }
   }, [btwState?.responseText])
@@ -146,24 +154,35 @@ export function BtwBubble() {
               padding: '10px 14px',
               maxHeight: 280,
               overflowY: 'auto',
+              overflowX: 'hidden',
               border: `1px solid ${colors.containerBorder}`,
             }}
             ref={scrollRef}
+            onScroll={handleScroll}
           >
             {/* Question */}
             <div style={{ display: 'flex', alignItems: 'baseline', gap: 8, marginBottom: 6 }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: colors.accent,
-                  fontWeight: 600,
-                  letterSpacing: '0.05em',
-                  textTransform: 'uppercase',
-                  flexShrink: 0,
-                }}
+              <svg
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                style={{ color: colors.accent, flexShrink: 0, marginTop: 1 }}
               >
-                btw
-              </span>
+                {/* Map body */}
+                <path
+                  d="M3 6.5L9 4l6 3 6-2.5V18.5L15 21l-6-3-6 2.5V6.5z"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinejoin="round"
+                  fill="none"
+                />
+                <line x1="9" y1="4" x2="9" y2="18" stroke="currentColor" strokeWidth="1.8" />
+                <line x1="15" y1="7" x2="15" y2="21" stroke="currentColor" strokeWidth="1.8" />
+                {/* Question mark */}
+                <circle cx="19.5" cy="4.5" r="4" fill={colors.accent} />
+                <text x="19.5" y="7.5" textAnchor="middle" fontSize="6" fontWeight="700" fill="white" fontFamily="system-ui">?</text>
+              </svg>
               <span style={{ fontSize: 13, color: colors.textSecondary, lineHeight: 1.4 }}>
                 {btwState.question}
               </span>

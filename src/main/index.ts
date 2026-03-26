@@ -333,7 +333,7 @@ ipcMain.handle(IPC.BTW_PROMPT, async (_event, opts: BtwOptions) => {
     {
       prompt: opts.question,
       projectPath: btwDir,
-      maxTurns: 1,
+      maxTurns: 5,
       systemPrompt: BTW_SYSTEM_PROMPT,
     },
     (text) => broadcast(IPC.BTW_EVENT, { btwId: opts.btwId, type: 'chunk', text }),
@@ -483,7 +483,10 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
     const allSessions: Array<{ sessionId: string; slug: string | null; firstMessage: string | null; lastTimestamp: string; size: number; projectPath: string }> = []
 
     const projectDirs = readdirSync(projectsRoot).filter((d: string) => {
-      try { return statSync(join(projectsRoot, d)).isDirectory() } catch { return false }
+      try {
+        if (d.includes('clui-btw-')) return false // skip btw ephemeral sessions
+        return statSync(join(projectsRoot, d)).isDirectory()
+      } catch { return false }
     })
 
     for (const dir of projectDirs) {

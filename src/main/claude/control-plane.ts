@@ -834,6 +834,7 @@ export class ControlPlane extends EventEmitter {
   ): void {
     // Guard: task_complete and exit can both fire — only call onDone/onError once
     let settled = false
+    let receivedAnyChunk = false
 
     const cleanup = () => {
       this.runManager.removeListener('normalized', onNormalized)
@@ -851,8 +852,16 @@ export class ControlPlane extends EventEmitter {
     const onNormalized = (requestId: string, event: NormalizedEvent) => {
       if (requestId !== btwId) return
       if (event.type === 'text_chunk') {
-        if (!event.parentToolUseId) onChunk(event.text)
+        if (!event.parentToolUseId) {
+          receivedAnyChunk = true
+          onChunk(event.text)
+        }
       } else if (event.type === 'task_complete') {
+        // Fallback: if the model used tools and no text was streamed incrementally,
+        // emit the final result text before signalling done.
+        if (!receivedAnyChunk && event.result) {
+          onChunk(event.result)
+        }
         settle(() => onDone())
       } else if (event.type === 'error') {
         settle(() => onError(event.message))
