@@ -9,6 +9,19 @@ import { useColors } from '../theme'
 
 const REMARK_PLUGINS = [remarkGfm, remarkMath]
 const REHYPE_PLUGINS = [rehypeKatex]
+
+// Prevents default <a> navigation inside Electron; opens links externally instead.
+const SAFE_LINK_COMPONENTS = {
+  a: ({ href, children }: any) => (
+    <button
+      type="button"
+      className="underline decoration-dotted underline-offset-2 cursor-pointer"
+      onClick={() => { if (href) window.clui.openExternal(String(href)) }}
+    >
+      {children}
+    </button>
+  ),
+}
 const TRANSITION = { duration: 0.18, ease: [0.4, 0, 0.1, 1] as const }
 
 // ─── Claude Code Spinner: 12-frame palindrome at 120ms ───
@@ -212,7 +225,7 @@ export function BtwBubble() {
             {/* Streamed response */}
             {btwState.responseText && (
               <div className="text-[13px] leading-[1.6] prose-cloud min-w-0" style={{ color: colors.textPrimary }}>
-                <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>
+                <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={SAFE_LINK_COMPONENTS}>
                   {btwState.responseText}
                 </Markdown>
               </div>

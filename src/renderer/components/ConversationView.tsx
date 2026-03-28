@@ -25,6 +25,21 @@ const PAGE_SIZE = 100
 const REMARK_PLUGINS = [remarkGfm, remarkMath] // Hoisted — prevents re-parse on every render
 const REHYPE_PLUGINS = [rehypeKatex]
 
+// Minimal link override for Markdown surfaces without full markdownComponents:
+// prevents default <a> navigation (which would leave the Electron window)
+// and instead opens links externally via the IPC bridge.
+const SAFE_LINK_COMPONENTS = {
+  a: ({ href, children }: any) => (
+    <button
+      type="button"
+      className="underline decoration-dotted underline-offset-2 cursor-pointer"
+      onClick={() => { if (href) window.clui.openExternal(String(href)) }}
+    >
+      {children}
+    </button>
+  ),
+}
+
 // ─── Types ───
 
 type GroupedItem =
@@ -762,7 +777,7 @@ function ToolResultAccordion({ tool }: { tool: Message }) {
                 <span style={{ color: colors.textTertiary }}>Loading...</span>
               )}
               {hasResult && (
-                <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS}>{tool.toolResult!}</Markdown>
+                <Markdown remarkPlugins={REMARK_PLUGINS} rehypePlugins={REHYPE_PLUGINS} components={SAFE_LINK_COMPONENTS}>{tool.toolResult!}</Markdown>
               )}
               {!loading && !hasResult && (
                 <span style={{ color: colors.textTertiary }}>No result data available</span>
