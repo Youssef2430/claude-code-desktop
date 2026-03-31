@@ -804,7 +804,10 @@ export const useSessionStore = create<State>((set, get) => ({
             ...withEffectiveBase,
             title,
             attachments: [],
-            queuedPrompts: [...withEffectiveBase.queuedPrompts, prompt],
+            queuedPrompts: [
+              ...withEffectiveBase.queuedPrompts,
+              { prompt, attachments: tab.attachments.length > 0 ? [...tab.attachments] : undefined },
+            ],
           }
         }
         return {
@@ -816,7 +819,13 @@ export const useSessionStore = create<State>((set, get) => ({
           attachments: [],
           messages: [
             ...withEffectiveBase.messages,
-            { id: nextMsgId(), role: 'user' as const, content: prompt, timestamp: Date.now() },
+            {
+              id: nextMsgId(),
+              role: 'user' as const,
+              content: prompt,
+              timestamp: Date.now(),
+              attachments: tab.attachments.length > 0 ? [...tab.attachments] : undefined,
+            },
           ],
         }
       }),
@@ -866,11 +875,17 @@ export const useSessionStore = create<State>((set, get) => ({
               updated.todoMessageId = null
               // Move the first queued prompt into the timeline (it's now being processed)
               if (updated.queuedPrompts.length > 0) {
-                const [nextPrompt, ...rest] = updated.queuedPrompts
+                const [nextQueued, ...rest] = updated.queuedPrompts
                 updated.queuedPrompts = rest
                 updated.messages = [
                   ...updated.messages,
-                  { id: nextMsgId(), role: 'user' as const, content: nextPrompt, timestamp: Date.now() },
+                  {
+                    id: nextMsgId(),
+                    role: 'user' as const,
+                    content: nextQueued.prompt,
+                    timestamp: Date.now(),
+                    attachments: nextQueued.attachments,
+                  },
                 ]
               }
             }

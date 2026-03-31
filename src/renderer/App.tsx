@@ -90,6 +90,7 @@ export default function App() {
     window.screen.availLeft + Math.round((window.screen.availWidth - OVERLAY_BAR_WIDTH) / 2)
   )
   const snapGridRef = useRef<HTMLDivElement>(null)
+  const dragActiveRef = useRef(false) // true once mouse has moved past the drag threshold
 
   // OS-level click-through (RAF-throttled to avoid per-pixel IPC)
   useEffect(() => {
@@ -204,9 +205,9 @@ export default function App() {
       // Only respond to primary (left) button — prevent accidental drags from right/middle clicks
       if (e.button !== 0) return
       const el = e.target as HTMLElement
-      // Skip interactive elements — everything else on the card is draggable
+      // Skip interactive elements — only the tab strip area is draggable
       if (el.closest('button, input, textarea, a, select, [role="button"], [contenteditable], .cm-editor')) return
-      if (!el.closest('[data-clui-ui]')) return
+      if (!el.closest('[data-drag-handle]')) return
       e.preventDefault()
       // Double-click: snap back to center-bottom
       if (e.detail >= 2) {
@@ -220,20 +221,30 @@ export default function App() {
       // Ensure full mouse capture for the duration of the drag
       window.clui.setIgnoreMouseEvents(false)
       dragRef.current = { startX: e.screenX, startY: e.screenY }
-      // Show snap grid (dots below card + full-screen overlay)
-      const zone = getSnapZone(windowXRef.current)
-      if (snapGridRef.current) {
-        snapGridRef.current.dataset.zone = zone
-        snapGridRef.current.style.opacity = '1'
-      }
-      window.clui.showSnapGrid()
-      window.clui.updateSnapZone(zone)
+      dragActiveRef.current = false // grid deferred until actual movement
     }
+
+    const DRAG_THRESHOLD = 4 // px — ignore movement smaller than this to distinguish clicks from drags
 
     const onMouseMove = (e: MouseEvent) => {
       if (!dragRef.current) return
       const dx = e.screenX - dragRef.current.startX
       const dy = e.screenY - dragRef.current.startY
+
+      // Don't start dragging until the mouse has moved past the threshold
+      if (!dragActiveRef.current) {
+        if (Math.abs(dx) < DRAG_THRESHOLD && Math.abs(dy) < DRAG_THRESHOLD) return
+        // Passed threshold — activate drag and show snap grid
+        dragActiveRef.current = true
+        const zone = getSnapZone(windowXRef.current)
+        if (snapGridRef.current) {
+          snapGridRef.current.dataset.zone = zone
+          snapGridRef.current.style.opacity = '1'
+        }
+        window.clui.showSnapGrid()
+        window.clui.updateSnapZone(zone)
+      }
+
       // Accumulate deltas and update start position immediately for correct per-frame accounting
       dragRef.current.startX = e.screenX
       dragRef.current.startY = e.screenY
@@ -253,19 +264,24 @@ export default function App() {
           dragRAFRef.current = null
           pendingDeltaRef.current = { dx: 0, dy: 0 }
         }
-        // Snap window to nearest horizontal zone
-        const zone = getSnapZone(windowXRef.current)
-        const targetX = getSnapTargetX(zone)
-        const deltaX = targetX - windowXRef.current
-        if (deltaX !== 0) {
-          window.clui.startWindowDrag(deltaX, 0)
-          windowXRef.current = targetX
+
+        // Only snap and hide grid if dragging actually started (threshold was exceeded)
+        if (dragActiveRef.current) {
+          // Snap window to nearest horizontal zone
+          const zone = getSnapZone(windowXRef.current)
+          const targetX = getSnapTargetX(zone)
+          const deltaX = targetX - windowXRef.current
+          if (deltaX !== 0) {
+            window.clui.startWindowDrag(deltaX, 0)
+            windowXRef.current = targetX
+          }
+          // Hide snap grid (dots + full-screen overlay)
+          if (snapGridRef.current) {
+            snapGridRef.current.style.opacity = '0'
+          }
+          window.clui.hideSnapGrid()
+          dragActiveRef.current = false
         }
-        // Hide snap grid (dots + full-screen overlay)
-        if (snapGridRef.current) {
-          snapGridRef.current.style.opacity = '0'
-        }
-        window.clui.hideSnapGrid()
 
         dragRef.current = null
 
@@ -393,8 +409,8 @@ export default function App() {
               zIndex: isExpanded ? 20 : 10,
             }}
           >
-            {/* Tab strip — always mounted */}
-            <div className="no-drag">
+            {/* Tab strip — always mounted; data-drag-handle marks this as the only drag-initiating region */}
+            <div data-drag-handle>
               <TabStrip />
             </div>
 
