@@ -633,8 +633,8 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
         try { stat = statSync(filePath) } catch { continue }
         if (stat.size < 100) continue
 
-        const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null } = {
-          validated: false, slug: null, firstMessage: null, lastTimestamp: null,
+        const meta: { validated: boolean; slug: string | null; firstMessage: string | null; lastTimestamp: string | null; cwd: string | null } = {
+          validated: false, slug: null, firstMessage: null, lastTimestamp: null, cwd: null,
         }
 
         await new Promise<void>((resolve) => {
@@ -647,6 +647,8 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
               }
               if (obj.slug && !meta.slug) meta.slug = obj.slug
               if (obj.timestamp) meta.lastTimestamp = obj.timestamp
+              // Extract the real working directory — present in every JSONL entry
+              if (obj.cwd && !meta.cwd) meta.cwd = obj.cwd
               if (obj.type === 'user' && !meta.firstMessage) {
                 const content = obj.message?.content
                 if (typeof content === 'string') {
@@ -668,7 +670,8 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
             firstMessage: meta.firstMessage,
             lastTimestamp: meta.lastTimestamp || stat.mtime.toISOString(),
             size: stat.size,
-            projectPath: encodedDir,
+            // Prefer the real cwd from the JSONL; fall back to encoded dir for very old sessions
+            projectPath: meta.cwd || encodedDir,
           })
         }
       }
