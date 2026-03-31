@@ -186,6 +186,8 @@ export interface Message {
   toolResult?: string
   toolStatus?: 'running' | 'completed' | 'error'
   timestamp: number
+  /** Attachments sent with this user message (images / files) */
+  attachments?: Attachment[]
 }
 
 export interface RunResult {

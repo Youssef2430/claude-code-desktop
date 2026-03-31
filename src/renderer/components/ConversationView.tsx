@@ -11,12 +11,13 @@ import {
   Brain, Lightning, ChatDots, HardDrives, Plugs, Archive, CircleDashed, Cpu,
   CurrencyDollar, Clock, ArrowsClockwise, CoinVertical,
   CheckSquare, CheckCircle, Circle,
+  File, Image as ImageIcon, FileCode,
 } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
 import { useColors, useThemeStore } from '../theme'
-import type { Message } from '../../shared/types'
+import type { Message, Attachment } from '../../shared/types'
 
 // ─── Constants ───
 
@@ -407,10 +408,109 @@ function InterruptButton({ tabId }: { tabId: string }) {
   )
 }
 
+// ─── Attachment path prefix helpers ───
+
+/** Regex matching `[Attached image: /path]` or `[Attached file: /path]` lines injected by sendMessage */
+const ATTACHMENT_PREFIX_RE = /\[Attached (?:image|file): ([^\]]+)\]\n*/g
+
+/**
+ * Strip `[Attached ...: ...]` prefixes from user message content for display.
+ * Returns the cleaned text (may be empty if the message was attachment-only).
+ */
+function stripAttachmentPrefixes(content: string): string {
+  return content.replace(ATTACHMENT_PREFIX_RE, '').trim()
+}
+
+/**
+ * Parse `[Attached ...: /path]` prefixes from message content into lightweight
+ * Attachment-like objects so we can show file chips for messages that were loaded
+ * from session history (where the `attachments` field isn't persisted).
+ */
+function parseAttachmentPrefixes(content: string): Attachment[] {
+  const results: Attachment[] = []
+  let match: RegExpExecArray | null
+  const re = /\[Attached (image|file): ([^\]]+)\]/g
+  while ((match = re.exec(content)) !== null) {
+    const type = match[1] as 'image' | 'file'
+    const path = match[2]
+    const name = path.split('/').pop() || path
+    results.push({ id: `parsed-${path}`, type, name, path })
+  }
+  return results
+}
+
+// ─── Message Attachment Preview (read-only, displayed in sent user bubbles) ───
+
+const MSG_FILE_ICONS: Record<string, React.ReactNode> = {
+  'image/png': <ImageIcon size={14} />,
+  'image/jpeg': <ImageIcon size={14} />,
+  'image/gif': <ImageIcon size={14} />,
+  'image/webp': <ImageIcon size={14} />,
+  'image/svg+xml': <ImageIcon size={14} />,
+  'text/plain': <FileText size={14} />,
+  'text/markdown': <FileText size={14} />,
+  'application/json': <FileCode size={14} />,
+  'text/yaml': <FileCode size={14} />,
+  'text/toml': <FileCode size={14} />,
+}
+
+function MessageAttachments({ attachments }: { attachments: Attachment[] }) {
+  const colors = useColors()
+  if (attachments.length === 0) return null
+
+  return (
+    <div className="flex flex-wrap gap-1.5 pb-1.5">
+      {attachments.map((a) => (
+        <div
+          key={a.id}
+          className="flex items-center gap-1.5 flex-shrink-0"
+          style={{
+            background: colors.surfaceSecondary,
+            border: `1px solid ${colors.userBubbleBorder}`,
+            borderRadius: 10,
+            padding: a.dataUrl ? '3px 8px 3px 3px' : '4px 8px',
+            maxWidth: 200,
+          }}
+        >
+          {a.dataUrl ? (
+            <img
+              src={a.dataUrl}
+              alt={a.name}
+              className="rounded-[8px] object-cover flex-shrink-0"
+              style={{ width: 32, height: 32 }}
+            />
+          ) : (
+            <span className="flex-shrink-0" style={{ color: colors.textTertiary }}>
+              {MSG_FILE_ICONS[a.mimeType || ''] || (a.type === 'image' ? <ImageIcon size={14} /> : <File size={14} />)}
+            </span>
+          )}
+          <span
+            className="text-[11px] font-medium truncate min-w-0 flex-1"
+            style={{ color: colors.userBubbleText, opacity: 0.85 }}
+          >
+            {a.name}
+          </span>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 // ─── User Message ───
 
 function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
+
+  // Resolve attachments: prefer the rich `attachments` field (has dataUrl thumbnails),
+  // fall back to parsing `[Attached ...: /path]` prefixes from content (session history).
+  const attachments = (message.attachments && message.attachments.length > 0)
+    ? message.attachments
+    : parseAttachmentPrefixes(message.content)
+  const hasAttachments = attachments.length > 0
+
+  // Strip attachment path prefixes from the displayed text
+  const displayText = hasAttachments ? stripAttachmentPrefixes(message.content) : message.content
+
   const content = (
     <div
       className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%]"
@@ -419,9 +519,13 @@ function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: b
         color: colors.userBubbleText,
         border: `1px solid ${colors.userBubbleBorder}`,
         borderRadius: '14px 14px 4px 14px',
+        paddingTop: hasAttachments ? 10 : undefined,
       }}
     >
-      {message.content}
+      {hasAttachments && (
+        <MessageAttachments attachments={attachments} />
+      )}
+      {displayText}
     </div>
   )
 

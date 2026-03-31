@@ -816,7 +816,13 @@ export const useSessionStore = create<State>((set, get) => ({
           attachments: [],
           messages: [
             ...withEffectiveBase.messages,
-            { id: nextMsgId(), role: 'user' as const, content: prompt, timestamp: Date.now() },
+            {
+              id: nextMsgId(),
+              role: 'user' as const,
+              content: prompt,
+              timestamp: Date.now(),
+              attachments: tab.attachments.length > 0 ? [...tab.attachments] : undefined,
+            },
           ],
         }
       }),
