@@ -32,34 +32,106 @@ let lastWindowBounds: Electron.Rectangle | null = null
 const SNAP_GRID_HTML = `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
 *{margin:0;padding:0;box-sizing:border-box}
 html,body{width:100vw;height:100vh;overflow:hidden;background:transparent}
-.wrap{position:fixed;inset:0;opacity:0;transition:opacity 0.18s ease}
+.wrap{position:fixed;inset:0;opacity:0;transition:opacity 0.14s ease}
 .wrap.visible{opacity:1}
-.zones{display:flex;width:100%;height:100%;position:absolute;inset:0}
-.zone{flex:1;border-right:1px dashed rgba(255,255,255,0.13);transition:background 0.12s ease}
-.zone:last-child{border-right:none}
-.zone.active{background:rgba(255,255,255,0.04)}
-.hlines{position:absolute;inset:0;pointer-events:none}
-.hl{position:absolute;left:0;width:100%;height:0;border-top:1px dashed rgba(255,255,255,0.13)}
+.hud{position:absolute;inset:0;pointer-events:none}
+.zone-band{
+  position:absolute;top:0;bottom:0;left:0;width:0;
+  background:linear-gradient(90deg,rgba(255,255,255,0.10),rgba(255,255,255,0.06));
+  border-left:1px solid rgba(255,255,255,0.30);
+  border-right:1px solid rgba(255,255,255,0.30);
+  transition:left 0.11s ease,width 0.11s ease;
+}
+.line{
+  position:absolute;top:0;bottom:0;width:0;
+  border-left:1px dashed rgba(255,255,255,0.28);
+}
+.line.edge{border-left-style:solid;border-left-color:rgba(255,255,255,0.40)}
+.line.threshold{border-left-color:rgba(255,255,255,0.34)}
+.hline{
+  position:absolute;left:0;right:0;height:0;
+  border-top:1px dashed rgba(255,255,255,0.16);
+}
+.deadzone{
+  position:absolute;top:0;bottom:0;right:0;width:0;
+  background:linear-gradient(90deg,rgba(255,255,255,0.00),rgba(255,255,255,0.05));
+}
 </style></head><body>
 <div class="wrap" id="w">
-  <div class="zones">
-    <div class="zone" id="left"></div>
-    <div class="zone" id="center"></div>
-    <div class="zone" id="right"></div>
+  <div class="hud">
+    <div class="zone-band" id="zoneBand"></div>
+    <div class="line edge" id="startLine"></div>
+    <div class="line threshold" id="firstThreshold"></div>
+    <div class="line threshold" id="secondThreshold"></div>
+    <div class="line edge" id="endLine"></div>
+    <div class="deadzone" id="deadzone"></div>
+    <div id="hl"></div>
   </div>
-  <div class="hlines" id="hl"></div>
 </div>
 <script>
 const w=document.getElementById('w');
-const z={left:document.getElementById('left'),center:document.getElementById('center'),right:document.getElementById('right')};
+const band=document.getElementById('zoneBand');
+const startLine=document.getElementById('startLine');
+const firstThreshold=document.getElementById('firstThreshold');
+const secondThreshold=document.getElementById('secondThreshold');
+const endLine=document.getElementById('endLine');
+const deadzone=document.getElementById('deadzone');
 const hlc=document.getElementById('hl');
 const ROWS=6;
-for(let i=1;i<ROWS;i++){const d=document.createElement('div');d.className='hl';d.style.top=(100*i/ROWS)+'%';hlc.appendChild(d);}
-requestAnimationFrame(()=>w.classList.add('visible'));
-window.setSnapZone=function(zone){
-  Object.values(z).forEach(el=>el.classList.remove('active'));
-  if(z[zone])z[zone].classList.add('active');
+let activeZone='center';
+let barWidth=1040;
+let travel=0;
+let first=0;
+let second=0;
+for(let i=1;i<ROWS;i++){
+  const d=document.createElement('div');
+  d.className='hline';
+  d.style.top=(100*i/ROWS)+'%';
+  hlc.appendChild(d);
+}
+function px(n){return Math.max(0,Math.round(n));}
+function layout(){
+  const width=window.innerWidth;
+  travel=Math.max(0,width-barWidth);
+  first=travel*0.25;
+  second=travel*0.75;
+  startLine.style.left='0px';
+  firstThreshold.style.left=px(first)+'px';
+  secondThreshold.style.left=px(second)+'px';
+  endLine.style.left=px(travel)+'px';
+  deadzone.style.width=px(width-travel)+'px';
+}
+function renderZone(){
+  if(activeZone==='left'){
+    band.style.left='0px';
+    band.style.width=px(first)+'px';
+    return;
+  }
+  if(activeZone==='right'){
+    band.style.left=px(second)+'px';
+    band.style.width=px(travel-second)+'px';
+    return;
+  }
+  band.style.left=px(first)+'px';
+  band.style.width=px(second-first)+'px';
+}
+window.setSnapLayout=function(nextBarWidth){
+  if(Number.isFinite(nextBarWidth)){
+    barWidth=Math.max(0,Number(nextBarWidth));
+  }
+  layout();
+  renderZone();
 };
+window.setSnapZone=function(zone){
+  if(zone==='left'||zone==='center'||zone==='right'){
+    activeZone=zone;
+    renderZone();
+  }
+};
+window.addEventListener('resize',()=>{layout();renderZone();});
+layout();
+renderZone();
+requestAnimationFrame(()=>w.classList.add('visible'));
 </script></body></html>`
 
 // Feature flag: enable PTY interactive permissions transport
@@ -316,15 +388,58 @@ ipcMain.on(IPC.SET_IGNORE_MOUSE_EVENTS, (event, ignore: boolean, options?: { for
   }
 })
 
+function getOverlayDisplay(): Electron.Display {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    return screen.getDisplayMatching(mainWindow.getBounds())
+  }
+  const cursor = screen.getCursorScreenPoint()
+  return screen.getDisplayNearestPoint(cursor)
+}
+
+function applySnapGridLayout(): void {
+  if (!gridWindow || gridWindow.isDestroyed()) return
+  gridWindow.webContents
+    .executeJavaScript(`window.setSnapLayout && window.setSnapLayout(${BAR_WIDTH})`)
+    .catch(() => {})
+}
+
+function syncSnapGridToOverlayDisplay(): void {
+  if (!gridWindow || gridWindow.isDestroyed()) return
+  const { workArea } = getOverlayDisplay()
+  const current = gridWindow.getBounds()
+  if (
+    current.x !== workArea.x ||
+    current.y !== workArea.y ||
+    current.width !== workArea.width ||
+    current.height !== workArea.height
+  ) {
+    gridWindow.setBounds(workArea)
+    applySnapGridLayout()
+  }
+}
+
 // Manual window drag — works reliably with frameless + setIgnoreMouseEvents
 ipcMain.on(IPC.START_WINDOW_DRAG, (event, deltaX: number, deltaY: number) => {
   const win = BrowserWindow.fromWebContents(event.sender)
   if (win && !win.isDestroyed()) {
-    const [x, y] = win.getPosition()
+    const current = win.getBounds()
+    const proposed = {
+      x: Math.round(current.x + deltaX),
+      y: Math.round(current.y + deltaY),
+      width: current.width,
+      height: current.height,
+    }
+    const display = screen.getDisplayMatching(proposed)
+    const wa = display.workArea
+    const nextX = Math.max(wa.x, Math.min(proposed.x, wa.x + wa.width - current.width))
+    const nextY = Math.max(wa.y, Math.min(proposed.y, wa.y + wa.height - current.height))
     // Vertical is handled in two phases in the renderer: window first (until macOS clamps),
     // then CSS translateY within the window — so deltaY here is always within allowed range
-    win.setPosition(Math.round(x + deltaX), Math.round(y + deltaY))
+    win.setPosition(nextX, nextY)
     lastWindowBounds = win.getBounds()
+    if (gridWindow && !gridWindow.isDestroyed() && gridWindow.isVisible()) {
+      syncSnapGridToOverlayDisplay()
+    }
   }
 })
 
@@ -337,14 +452,13 @@ ipcMain.on(IPC.RESET_WINDOW_POSITION, () => {
 function getOrCreateGridWindow(): BrowserWindow {
   if (gridWindow && !gridWindow.isDestroyed()) return gridWindow
 
-  const cursor = screen.getCursorScreenPoint()
-  const display = screen.getDisplayNearestPoint(cursor)
+  const { workArea } = getOverlayDisplay()
 
   gridWindow = new BrowserWindow({
-    x: display.bounds.x,
-    y: display.bounds.y,
-    width: display.bounds.width,
-    height: display.bounds.height,
+    x: workArea.x,
+    y: workArea.y,
+    width: workArea.width,
+    height: workArea.height,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
@@ -360,15 +474,16 @@ function getOrCreateGridWindow(): BrowserWindow {
   gridWindow.setIgnoreMouseEvents(true)
   gridWindow.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true })
   gridWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(SNAP_GRID_HTML)}`)
+  gridWindow.webContents.on('did-finish-load', () => {
+    applySnapGridLayout()
+  })
   return gridWindow
 }
 
 ipcMain.on(IPC.SHOW_SNAP_GRID, () => {
   const win = getOrCreateGridWindow()
-  // Re-anchor to whichever display the cursor is on
-  const cursor = screen.getCursorScreenPoint()
-  const display = screen.getDisplayNearestPoint(cursor)
-  win.setBounds(display.bounds)
+  syncSnapGridToOverlayDisplay()
+  applySnapGridLayout()
   win.show()
 })
 
