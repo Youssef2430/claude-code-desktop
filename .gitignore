@@ -36,3 +36,6 @@ Desktop.ini
 # Temporary files
 *.tmp
 *.bak
+
+# Deployment
+certificates/*
