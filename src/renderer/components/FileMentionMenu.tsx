@@ -32,7 +32,7 @@ interface Props {
 const ICON_SIZE = 13
 
 /** Map file extension → Phosphor icon component + optional color hint */
-function getFileIcon(filename: string): React.ReactNode {
+export function getFileIcon(filename: string): React.ReactNode {
   const ext = filename.includes('.') ? filename.split('.').pop()!.toLowerCase() : ''
   const name = filename.toLowerCase()
 

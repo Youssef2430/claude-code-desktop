@@ -11,6 +11,22 @@ export const AVAILABLE_MODELS = [
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
 ] as const
 
+// ─── Persisted permission mode ───
+
+const PERMISSION_MODE_KEY = 'clui-permission-mode'
+
+function loadPermissionMode(): 'ask' | 'auto' {
+  try {
+    const v = localStorage.getItem(PERMISSION_MODE_KEY)
+    if (v === 'ask' || v === 'auto') return v
+  } catch {}
+  return 'ask'
+}
+
+function savePermissionMode(mode: 'ask' | 'auto'): void {
+  try { localStorage.setItem(PERMISSION_MODE_KEY, mode) } catch {}
+}
+
 // ─── Store ───
 
 interface StaticInfo {
@@ -189,7 +205,7 @@ export const useSessionStore = create<State>((set, get) => ({
   isExpanded: false,
   staticInfo: null,
   preferredModel: null,
-  permissionMode: 'ask',
+  permissionMode: loadPermissionMode(),
   btwState: null,
 
   // History picker
@@ -217,6 +233,11 @@ export const useSessionStore = create<State>((set, get) => ({
           homePath: result.homePath || '~',
         },
       })
+      // Sync persisted permission mode to the main process
+      const mode = get().permissionMode
+      if (mode !== 'ask') {
+        window.clui.setPermissionMode(mode)
+      }
     } catch {}
   },
 
@@ -226,6 +247,7 @@ export const useSessionStore = create<State>((set, get) => ({
 
   setPermissionMode: (mode) => {
     set({ permissionMode: mode })
+    savePermissionMode(mode)
     window.clui.setPermissionMode(mode)
   },
 

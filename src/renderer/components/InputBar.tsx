@@ -1,10 +1,10 @@
 import React, { useState, useRef, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Microphone, ArrowUp, SpinnerGap, X, Check, Wrench, CheckCircle } from '@phosphor-icons/react'
+import { Microphone, ArrowUp, SpinnerGap, X, Check, Wrench, CheckCircle, FolderSimple } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
-import { FileMentionMenu, type FileMentionMenuHandle } from './FileMentionMenu'
+import { FileMentionMenu, getFileIcon, type FileMentionMenuHandle } from './FileMentionMenu'
 import { useColors } from '../theme'
 
 const INPUT_MIN_HEIGHT = 20
@@ -12,6 +12,145 @@ const INPUT_MAX_HEIGHT = 140
 const MULTILINE_ENTER_HEIGHT = 52
 const MULTILINE_EXIT_HEIGHT = 50
 const INLINE_CONTROLS_RESERVED_WIDTH = 104
+
+/** Regex to find @path/to/file tokens in input text */
+const FILE_MENTION_RE = /(^|[\s])@([a-zA-Z0-9/\-_.]+)/g
+
+/** Build a pill element for a completed @mention */
+function buildPill(
+  filePath: string,
+  matchStart: number,
+  colors: ReturnType<typeof import('../theme').useColors>,
+): React.ReactNode {
+  const isDir = filePath.endsWith('/')
+  const baseName = filePath.split('/').filter(Boolean).pop() || filePath
+  return (
+    <span
+      key={`pill-${matchStart}`}
+      style={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 4,
+        background: colors.surfaceSecondary,
+        border: `1px solid ${colors.containerBorder}`,
+        borderRadius: 7,
+        padding: '1px 6px',
+        fontSize: 12,
+        fontWeight: 500,
+        lineHeight: '1.1',
+        color: colors.textPrimary,
+        verticalAlign: 'middle',
+        userSelect: 'none' as const,
+      }}
+    >
+      <span style={{ display: 'flex', alignItems: 'center', flexShrink: 0, opacity: 0.85 }}>
+        {isDir ? <FolderSimple size={14} weight="fill" /> : getFileIcon(baseName)}
+      </span>
+      <span style={{ whiteSpace: 'nowrap' }}>{baseName}</span>
+    </span>
+  )
+}
+
+/** Render input text with @path pills and a synthetic caret at the correct visual position.
+ *  The native textarea caret is hidden; this function renders a blinking cursor
+ *  element that accounts for the width difference between raw @path text and pills. */
+function renderMirrorContent(
+  text: string,
+  colors: ReturnType<typeof import('../theme').useColors>,
+  cursorPos: number,
+  showCaret: boolean,
+): React.ReactNode {
+  // Collect completed mention ranges
+  type Segment = { kind: 'text'; start: number; end: number }
+               | { kind: 'pill'; path: string; start: number; end: number }
+  const segments: Segment[] = []
+  let lastIdx = 0
+  const re = new RegExp(FILE_MENTION_RE.source, FILE_MENTION_RE.flags)
+  let match: RegExpExecArray | null
+
+  while ((match = re.exec(text)) !== null) {
+    const [fullMatch, prefix, filePath] = match
+    const matchEnd = match.index + fullMatch.length
+    const nextChar = text[matchEnd]
+    if (nextChar !== ' ' && nextChar !== '\n' && matchEnd !== text.length) continue
+
+    const pillStart = match.index + prefix.length // index of '@'
+
+    // Text before this pill
+    if (pillStart > lastIdx) {
+      segments.push({ kind: 'text', start: lastIdx, end: pillStart })
+    }
+    segments.push({ kind: 'pill', path: filePath, start: pillStart, end: matchEnd })
+    lastIdx = matchEnd
+  }
+  // Trailing text
+  if (lastIdx < text.length) {
+    segments.push({ kind: 'text', start: lastIdx, end: text.length })
+  }
+
+  // No completed pills → render plain text with caret
+  if (!segments.some(s => s.kind === 'pill')) {
+    if (!showCaret) return text
+    const before = text.slice(0, cursorPos)
+    const after = text.slice(cursorPos)
+    return <>{before}<span className="mirror-caret" />{after}</>
+  }
+
+  // Render segments, interleaving the caret at the mapped position
+  const parts: React.ReactNode[] = []
+  let caretPlaced = false
+
+  for (const seg of segments) {
+    if (seg.kind === 'text') {
+      const t = text.slice(seg.start, seg.end)
+      if (!caretPlaced && showCaret && cursorPos >= seg.start && cursorPos <= seg.end) {
+        const rel = cursorPos - seg.start
+        if (rel > 0) parts.push(t.slice(0, rel))
+        parts.push(<span key="caret" className="mirror-caret" />)
+        if (rel < t.length) parts.push(t.slice(rel))
+        caretPlaced = true
+      } else {
+        parts.push(t)
+      }
+    } else {
+      // If cursor is inside this pill's text range, place caret AFTER the pill
+      const shouldPlaceCaret = !caretPlaced && showCaret && cursorPos >= seg.start && cursorPos <= seg.end
+      parts.push(buildPill(seg.path, seg.start, colors))
+      if (shouldPlaceCaret) {
+        parts.push(<span key="caret" className="mirror-caret" />)
+        caretPlaced = true
+      }
+    }
+  }
+
+  // Caret at the very end
+  if (!caretPlaced && showCaret) {
+    parts.push(<span key="caret" className="mirror-caret" />)
+  }
+
+  return <>{parts}</>
+}
+
+/** Find a completed @mention that the cursor is inside or at the boundary of.
+ *  Returns [start, end] indices of the full `@path ` token, or null. */
+function findMentionAtCursor(text: string, cursor: number): [number, number] | null {
+  const re = new RegExp(FILE_MENTION_RE.source, FILE_MENTION_RE.flags)
+  let match: RegExpExecArray | null
+  while ((match = re.exec(text)) !== null) {
+    const [fullMatch, prefix] = match
+    const tokenStart = match.index + prefix.length // index of '@'
+    const tokenEnd = match.index + fullMatch.length
+    const nextChar = text[tokenEnd]
+    const isComplete = nextChar === ' ' || nextChar === '\n' || tokenEnd === text.length
+    if (!isComplete) continue
+    // Include the trailing space as part of the deletable region
+    const deleteEnd = nextChar === ' ' || nextChar === '\n' ? tokenEnd + 1 : tokenEnd
+    if (cursor > tokenStart && cursor <= deleteEnd) {
+      return [tokenStart, deleteEnd]
+    }
+  }
+  return null
+}
 
 type VoiceState = 'idle' | 'recording' | 'transcribing'
 
@@ -44,6 +183,9 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const voiceToggleRef = useRef<() => void>(() => {})
   const mentionMenuRef = useRef<FileMentionMenuHandle>(null)
   const mentionCountRef = useRef(0)
+  const mirrorRef = useRef<HTMLDivElement>(null)
+  const [selectionPos, setSelectionPos] = useState(0)
+  const [inputFocused, setInputFocused] = useState(false)
 
   useImperativeHandle(ref, () => ({
     focus: () => textareaRef.current?.focus(),
@@ -73,6 +215,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const isConnecting = tab?.status === 'connecting'
   const hasContent = input.trim().length > 0 || (tab?.attachments?.length ?? 0) > 0
   const canSend = !!tab && !isConnecting && hasContent
+  const hasMentions = input.includes('@')
   const attachments = tab?.attachments || []
   const showSlashMenu = slashFilter !== null && !isConnecting
   const showMentionMenu = mentionFilter !== null && !isConnecting
@@ -160,6 +303,16 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   }, [input, measureInlineHeight])
 
   useLayoutEffect(() => { autoResize() }, [input, isMultiLine, autoResize])
+
+  // Sync textarea scroll to mirror overlay
+  useEffect(() => {
+    const el = textareaRef.current
+    const mirror = mirrorRef.current
+    if (!el || !mirror) return
+    const onScroll = () => { mirror.scrollTop = el.scrollTop }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  })
 
   useEffect(() => {
     return () => {
@@ -516,6 +669,28 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       if (e.key === 'Tab') { e.preventDefault(); if (filtered.length > 0) handleSlashSelect(filtered[slashIndex]); return }
       if (e.key === 'Escape') { e.preventDefault(); setSlashFilter(null); return }
     }
+    // Atomic delete: backspace inside or at the end of a completed @mention removes the whole token
+    if (e.key === 'Backspace' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+      const el = textareaRef.current
+      if (el && el.selectionStart === el.selectionEnd) {
+        const cursor = el.selectionStart
+        const mention = findMentionAtCursor(input, cursor)
+        if (mention) {
+          e.preventDefault()
+          const [start, end] = mention
+          const newInput = input.slice(0, start) + input.slice(end)
+          setInput(newInput)
+          updateMentionFilter(newInput, start)
+          requestAnimationFrame(() => {
+            if (textareaRef.current) {
+              textareaRef.current.selectionStart = start
+              textareaRef.current.selectionEnd = start
+            }
+          })
+          return
+        }
+      }
+    }
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() }
     if (e.key === 'Escape' && !showSlashMenu && !showMentionMenu) { window.clui.hideWindow() }
   }
@@ -524,8 +699,16 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     const value = e.target.value
     const cursorPos = e.target.selectionStart ?? value.length
     setInput(value)
+    setSelectionPos(cursorPos)
     updateSlashFilter(value)
     updateMentionFilter(value, cursorPos)
+  }
+
+  // Track cursor position changes (arrow keys, clicks) for the synthetic caret
+  const handleSelect = () => {
+    if (textareaRef.current) {
+      setSelectionPos(textareaRef.current.selectionStart)
+    }
   }
 
   // ─── Paste image ───
@@ -648,35 +831,69 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       <div className="w-full" style={{ minHeight: 50 }}>
         {isMultiLine ? (
           <div className="w-full">
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                isConnecting
-                  ? 'Initializing...'
-                  : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
-                    : voiceState === 'transcribing'
-                      ? 'Transcribing...'
-                      : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
-              }
-              rows={1}
-              className="w-full bg-transparent resize-none"
-              style={{
-                fontSize: 14,
-                lineHeight: '20px',
-                color: colors.textPrimary,
-                minHeight: 20,
-                maxHeight: INPUT_MAX_HEIGHT,
-                paddingTop: 11,
-                paddingBottom: 2,
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onSelect={handleSelect}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
+                placeholder={
+                  isConnecting
+                    ? 'Initializing...'
+                    : voiceState === 'recording'
+                      ? 'Recording... ✓ to confirm, ✕ to cancel'
+                      : voiceState === 'transcribing'
+                        ? 'Transcribing...'
+                        : isBusy
+                          ? 'Type to queue a message...'
+                          : 'Ask Claude Code anything...'
+                }
+                rows={1}
+                className="block w-full bg-transparent resize-none"
+                style={{
+                  fontSize: 14,
+                  lineHeight: '20px',
+                  color: hasMentions ? 'transparent' : colors.textPrimary,
+                  caretColor: hasMentions ? 'transparent' : colors.textPrimary,
+                  minHeight: 20,
+                  maxHeight: INPUT_MAX_HEIGHT,
+                  paddingTop: 11,
+                  paddingBottom: 2,
+                }}
+              />
+              {hasMentions && (
+                <div
+                  ref={mirrorRef}
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    fontSize: 14,
+                    lineHeight: '20px',
+                    paddingTop: 11,
+                    paddingBottom: 2,
+                    fontFamily: 'inherit',
+                    letterSpacing: 'inherit',
+                    fontWeight: 'inherit',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    overflowY: 'hidden',
+                    overflowX: 'hidden',
+                    pointerEvents: 'none',
+                    color: colors.textPrimary,
+                  }}
+                >
+                  {renderMirrorContent(input, colors, selectionPos, inputFocused)}
+                </div>
+              )}
+            </div>
 
             <div className="flex items-center justify-end gap-1" style={{ marginTop: 0, paddingBottom: 4 }}>
               <VoiceButtons
@@ -706,35 +923,69 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
           </div>
         ) : (
           <div className="flex items-center w-full" style={{ minHeight: 50 }}>
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              onPaste={handlePaste}
-              placeholder={
-                isConnecting
-                  ? 'Initializing...'
-                  : voiceState === 'recording'
-                    ? 'Recording... ✓ to confirm, ✕ to cancel'
-                    : voiceState === 'transcribing'
-                      ? 'Transcribing...'
-                      : isBusy
-                        ? 'Type to queue a message...'
-                        : 'Ask Claude Code anything...'
-              }
-              rows={1}
-              className="flex-1 bg-transparent resize-none"
-              style={{
-                fontSize: 14,
-                lineHeight: '20px',
-                color: colors.textPrimary,
-                minHeight: 20,
-                maxHeight: INPUT_MAX_HEIGHT,
-                paddingTop: 15,
-                paddingBottom: 15,
-              }}
-            />
+            <div style={{ position: 'relative', flex: 1, alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>
+              <textarea
+                ref={textareaRef}
+                value={input}
+                onChange={handleInputChange}
+                onKeyDown={handleKeyDown}
+                onPaste={handlePaste}
+                onSelect={handleSelect}
+                onFocus={() => setInputFocused(true)}
+                onBlur={() => setInputFocused(false)}
+                placeholder={
+                  isConnecting
+                    ? 'Initializing...'
+                    : voiceState === 'recording'
+                      ? 'Recording... ✓ to confirm, ✕ to cancel'
+                      : voiceState === 'transcribing'
+                        ? 'Transcribing...'
+                        : isBusy
+                          ? 'Type to queue a message...'
+                          : 'Ask Claude Code anything...'
+                }
+                rows={1}
+                className="flex-1 bg-transparent resize-none"
+                style={{
+                  fontSize: 14,
+                  lineHeight: '20px',
+                  color: hasMentions ? 'transparent' : colors.textPrimary,
+                  caretColor: hasMentions ? 'transparent' : colors.textPrimary,
+                  minHeight: 20,
+                  maxHeight: INPUT_MAX_HEIGHT,
+                  paddingTop: 15,
+                  paddingBottom: 15,
+                }}
+              />
+              {hasMentions && (
+                <div
+                  ref={mirrorRef}
+                  aria-hidden="true"
+                  style={{
+                    position: 'absolute',
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    bottom: 0,
+                    fontSize: 14,
+                    lineHeight: '20px',
+                    paddingTop: 15,
+                    paddingBottom: 15,
+                    fontFamily: 'inherit',
+                    letterSpacing: 'inherit',
+                    fontWeight: 'inherit',
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
+                    overflowY: 'hidden',
+                    overflowX: 'hidden',
+                    pointerEvents: 'none',
+                    color: colors.textPrimary,
+                  }}
+                >
+                  {renderMirrorContent(input, colors, selectionPos, inputFocused)}
+                </div>
+              )}
+            </div>
 
             <div className="flex items-center gap-1 shrink-0 ml-2">
               <VoiceButtons

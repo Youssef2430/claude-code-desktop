@@ -17,6 +17,20 @@ html, body, #root {
   -webkit-font-smoothing: antialiased;
 }
 
+/* ─── Synthetic caret for @mention mirror overlay ─── */
+.mirror-caret {
+  display: inline-block;
+  width: 1.5px;
+  height: 1.15em;
+  background: var(--clui-text-primary);
+  vertical-align: text-bottom;
+  animation: mirror-caret-blink 1s step-end infinite;
+}
+@keyframes mirror-caret-blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
 /* ─── Scrollbar — thin & subtle ─── */
 ::-webkit-scrollbar {
   width: 4px;
