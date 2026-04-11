@@ -11,11 +11,12 @@ import {
   Brain, Lightning, ChatDots, HardDrives, Plugs, Archive, CircleDashed, Cpu,
   CurrencyDollar, Clock, ArrowsClockwise, CoinVertical,
   CheckSquare, CheckCircle, Circle,
-  File, Image as ImageIcon, FileCode,
+  File, Image as ImageIcon, FileCode, FolderSimple,
 } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { PermissionCard } from './PermissionCard'
 import { PermissionDeniedCard } from './PermissionDeniedCard'
+import { getFileIcon } from './FileMentionMenu'
 import { useColors, useThemeStore } from '../theme'
 import type { Message, Attachment } from '../../shared/types'
 
@@ -512,6 +513,66 @@ function MessageAttachments({ attachments }: { attachments: Attachment[] }) {
   )
 }
 
+// ─── Inline file-tag chip for @path references in user messages ───
+
+/** Regex to find @path/to/file tokens in user message text.
+ *  Matches '@' preceded by whitespace or at start, followed by path-like chars. */
+const FILE_TAG_RE = /(^|[\s])@([a-zA-Z0-9/\-_.]+)/g
+
+/** Render user message text, replacing @path tokens with inline file chips. */
+function renderUserContent(text: string, colors: ReturnType<typeof useColors>): React.ReactNode {
+  const parts: React.ReactNode[] = []
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  const re = new RegExp(FILE_TAG_RE.source, FILE_TAG_RE.flags)
+
+  while ((match = re.exec(text)) !== null) {
+    const [fullMatch, prefix, filePath] = match
+    const matchStart = match.index
+
+    // Push text before this match (including the whitespace prefix)
+    if (matchStart + prefix.length > lastIndex) {
+      parts.push(text.slice(lastIndex, matchStart + prefix.length))
+    }
+
+    // Extract just the filename for icon lookup
+    const isDir = filePath.endsWith('/')
+    const fileName = filePath.split('/').filter(Boolean).pop() || filePath
+
+    parts.push(
+      <span
+        key={`tag-${matchStart}`}
+        className="inline-flex items-center gap-1 font-medium"
+        style={{
+          background: colors.surfaceSecondary,
+          border: `1px solid ${colors.userBubbleBorder}`,
+          borderRadius: 6,
+          padding: '0px 6px',
+          verticalAlign: 'baseline',
+          lineHeight: 'inherit',
+        }}
+      >
+        <span className="flex-shrink-0 flex items-center" style={{ color: colors.textTertiary }}>
+          {isDir ? <FolderSimple size={13} weight="fill" /> : getFileIcon(fileName)}
+        </span>
+        <span className="text-[12px]">{filePath}</span>
+      </span>
+    )
+
+    lastIndex = matchStart + fullMatch.length
+  }
+
+  // If no matches found, return plain text
+  if (parts.length === 0) return text
+
+  // Push remaining text after last match
+  if (lastIndex < text.length) {
+    parts.push(text.slice(lastIndex))
+  }
+
+  return <>{parts}</>
+}
+
 // ─── User Message ───
 
 function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
@@ -541,7 +602,7 @@ function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: b
       {hasAttachments && (
         <MessageAttachments attachments={attachments} />
       )}
-      {displayText}
+      {renderUserContent(displayText, colors)}
     </div>
   )
 
