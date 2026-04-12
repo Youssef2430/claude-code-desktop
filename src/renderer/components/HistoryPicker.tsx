@@ -5,37 +5,13 @@ import { Clock, ChatCircle, FolderSimple } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { shortPath, timeAgo } from '../utils/format'
 import type { SessionMeta } from '../../shared/types'
-
-function formatTimeAgo(isoDate: string): string {
-  const diff = Date.now() - new Date(isoDate).getTime()
-  const mins = Math.floor(diff / 60000)
-  if (mins < 1) return 'just now'
-  if (mins < 60) return `${mins}m ago`
-  const hours = Math.floor(mins / 60)
-  if (hours < 24) return `${hours}h ago`
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days}d ago`
-  return new Date(isoDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes}B`
   if (bytes < 1024 * 1024) return `${Math.round(bytes / 1024)}K`
   return `${(bytes / (1024 * 1024)).toFixed(1)}M`
-}
-
-/** Show the last segment of a path or encoded dir name.
- *  Encoded: '-Users-foo-myproject' → 'myproject'
- *  Real: '/Users/foo/myproject' → 'myproject' */
-function shortPath(p: string): string {
-  if (p.startsWith('-') && !p.includes('/')) {
-    // Encoded directory name — split on '-' and take the last segment
-    const parts = p.split('-').filter(Boolean)
-    return parts[parts.length - 1] || p
-  }
-  const parts = p.replace(/\/+$/, '').split('/')
-  return parts[parts.length - 1] || p
 }
 
 type HistoryScope = 'project' | 'all'
@@ -241,7 +217,7 @@ export function HistoryPicker() {
                     {session.firstMessage || session.slug || session.sessionId.substring(0, 8)}
                   </div>
                   <div className="flex items-center gap-2 text-[10px] mt-0.5" style={{ color: colors.textTertiary }}>
-                    <span>{formatTimeAgo(session.lastTimestamp)}</span>
+                    <span>{timeAgo(session.lastTimestamp)}</span>
                     <span>{formatSize(session.size)}</span>
                     {session.slug && <span className="truncate">{session.slug}</span>}
                   </div>

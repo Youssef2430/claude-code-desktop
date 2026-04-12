@@ -344,9 +344,13 @@ function EmptyState() {
 
 // ─── Copy Button ───
 
-function CopyButton({ text }: { text: string }) {
+function CopyButton({ text, messageId }: { text: string; messageId: string }) {
   const [copied, setCopied] = useState(false)
   const colors = useColors()
+
+  // React to keyboard-shortcut copy (Cmd+Shift+C) via store
+  const copiedViaShortcut = useSessionStore((s) => s.copiedMessageId === messageId)
+  const showCopied = copied || copiedViaShortcut
 
   const handleCopy = async () => {
     try {
@@ -365,15 +369,27 @@ function CopyButton({ text }: { text: string }) {
       onClick={handleCopy}
       className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[11px] cursor-pointer flex-shrink-0"
       style={{
-        background: copied ? colors.statusCompleteBg : 'transparent',
-        color: copied ? colors.statusComplete : colors.textTertiary,
+        background: showCopied ? colors.statusCompleteBg : 'transparent',
+        color: showCopied ? colors.statusComplete : colors.textTertiary,
         border: 'none',
       }}
       title="Copy response"
     >
-      {copied ? <Check size={11} /> : <Copy size={11} />}
-      <span>{copied ? 'Copied' : 'Copy'}</span>
+      {showCopied ? <Check size={11} /> : <Copy size={11} />}
+      <span>{showCopied ? 'Copied' : 'Copy'}</span>
     </motion.button>
+  )
+}
+
+/** Wrapper that makes the CopyButton visible when copied via keyboard shortcut */
+function CopyButtonWrapper({ messageId, children }: { messageId: string; children: React.ReactNode }) {
+  const copiedViaShortcut = useSessionStore((s) => s.copiedMessageId === messageId)
+  return (
+    <div className={`absolute bottom-0 right-0 transition-opacity duration-100 ${
+      copiedViaShortcut ? 'opacity-100' : 'opacity-0 group-hover/msg:opacity-100'
+    }`}>
+      {children}
+    </div>
   )
 }
 
@@ -791,12 +807,12 @@ const AssistantMessage = React.memo(function AssistantMessage({
           {message.content}
         </Markdown>
       </div>
-      {/* Copy button — always in DOM, shown via CSS :hover (no React state needed).
+      {/* Copy button — always in DOM, shown via CSS :hover or when copied via shortcut.
           Absolute positioning so it never shifts the text layout. */}
       {message.content.trim() && (
-        <div className="absolute bottom-0 right-0 opacity-0 group-hover/msg:opacity-100 transition-opacity duration-100">
-          <CopyButton text={message.content} />
-        </div>
+        <CopyButtonWrapper messageId={message.id}>
+          <CopyButton text={message.content} messageId={message.id} />
+        </CopyButtonWrapper>
       )}
     </div>
   )

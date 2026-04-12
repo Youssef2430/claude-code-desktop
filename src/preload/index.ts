@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, BtwOptions, BtwEvent } from '../shared/types'
+import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, BtwOptions, BtwEvent, SearchResult, SearchIndexStatus } from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -38,6 +38,11 @@ export interface CluiAPI {
   setPermissionMode(mode: string): void
   btwPrompt(opts: BtwOptions): Promise<void>
   onBtwEvent(callback: (event: BtwEvent) => void): () => void
+  // ─── Search ───
+  searchSessions(query: string): Promise<SearchResult[]>
+  triggerSearchIndex(): void
+  onSearchIndexStatus(cb: (status: SearchIndexStatus) => void): () => void
+
   getTheme(): Promise<{ isDark: boolean }>
   onThemeChange(callback: (isDark: boolean) => void): () => void
 
@@ -111,6 +116,14 @@ const api: CluiAPI = {
   uninstallPlugin: (pluginName) =>
     ipcRenderer.invoke(IPC.MARKETPLACE_UNINSTALL, { pluginName }),
   setPermissionMode: (mode) => ipcRenderer.send(IPC.SET_PERMISSION_MODE, mode),
+  // Search
+  searchSessions: (query: string) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, query),
+  triggerSearchIndex: () => ipcRenderer.send(IPC.SEARCH_BUILD_INDEX),
+  onSearchIndexStatus: (cb: (status: SearchIndexStatus) => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, status: SearchIndexStatus) => cb(status)
+    ipcRenderer.on(IPC.SEARCH_INDEX_STATUS, handler)
+    return () => ipcRenderer.removeListener(IPC.SEARCH_INDEX_STATUS, handler)
+  },
   btwPrompt: (opts) => ipcRenderer.invoke(IPC.BTW_PROMPT, opts),
   onBtwEvent: (callback) => {
     const handler = (_e: Electron.IpcRendererEvent, event: BtwEvent) => callback(event)
