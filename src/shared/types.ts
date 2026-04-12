@@ -293,6 +293,25 @@ export interface EnrichedError {
   permissionDenials?: Array<{ tool_name: string; tool_use_id: string }>
 }
 
+// ─── Search ───
+
+export interface SearchResult {
+  sessionId: string
+  projectPath: string
+  score: number
+  snippet: string
+  firstMessage: string | null
+  lastTimestamp: string
+  slug: string | null
+}
+
+export interface SearchIndexStatus {
+  state: 'idle' | 'indexing' | 'ready' | 'error'
+  indexed?: number
+  total?: number
+  error?: string
+}
+
 // ─── Session History ───
 
 export interface SessionMeta {
@@ -412,6 +431,10 @@ export const IPC = {
   MARKETPLACE_INSTALLED: 'clui:marketplace-installed',
   MARKETPLACE_INSTALL: 'clui:marketplace-install',
   MARKETPLACE_UNINSTALL: 'clui:marketplace-uninstall',
+
+  // Search
+  SEARCH_SESSIONS: 'clui:search-sessions',
+  SEARCH_INDEX_STATUS: 'clui:search-index-status',
 
   // BTW side question
   BTW_PROMPT: 'clui:btw-prompt',

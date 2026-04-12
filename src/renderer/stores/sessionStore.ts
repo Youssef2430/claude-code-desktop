@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, TodoTask } from '../../shared/types'
+import type { TabStatus, NormalizedEvent, EnrichedError, Message, TabState, Attachment, CatalogPlugin, PluginStatus, TodoTask, SearchIndexStatus } from '../../shared/types'
 import { useThemeStore } from '../theme'
 import notificationSrc from '../../../resources/notification.mp3'
 
@@ -68,6 +68,10 @@ interface State {
   marketplaceSearch: string
   marketplaceFilter: string
 
+  // Search state
+  searchPanelOpen: boolean
+  searchIndexStatus: SearchIndexStatus
+
   // Actions
   initStaticInfo: () => Promise<void>
   setPreferredModel: (model: string | null) => void
@@ -94,6 +98,10 @@ interface State {
   historyPickerOpen: boolean
   toggleHistoryPicker: () => void
   closeHistoryPicker: () => void
+  /** Search panel */
+  toggleSearchPanel: () => void
+  closeSearchPanel: () => void
+  setSearchIndexStatus: (status: SearchIndexStatus) => void
   resumeSession: (sessionId: string, title?: string, projectPath?: string) => Promise<string>
   addSystemMessage: (content: string) => void
   sendMessage: (prompt: string, projectPath?: string) => void
@@ -211,6 +219,10 @@ export const useSessionStore = create<State>((set, get) => ({
   // History picker
   historyPickerOpen: false,
 
+  // Search
+  searchPanelOpen: false,
+  searchIndexStatus: { state: 'idle' } as SearchIndexStatus,
+
   // Marketplace
   marketplaceOpen: false,
   marketplaceCatalog: [],
@@ -284,6 +296,7 @@ export const useSessionStore = create<State>((set, get) => ({
       set((prev) => ({
         isExpanded: willExpand,
         marketplaceOpen: false,
+        searchPanelOpen: false,
         // Expanding = reading: clear unread flag
         tabs: willExpand
           ? prev.tabs.map((t) => t.id === tabId ? { ...t, hasUnread: false } : t)
@@ -294,6 +307,7 @@ export const useSessionStore = create<State>((set, get) => ({
       set((prev) => ({
         activeTabId: tabId,
         marketplaceOpen: false,
+        searchPanelOpen: false,
         tabs: prev.tabs.map((t) =>
           t.id === tabId ? { ...t, hasUnread: false } : t
         ),
@@ -307,6 +321,7 @@ export const useSessionStore = create<State>((set, get) => ({
     set((s) => ({
       isExpanded: willExpand,
       marketplaceOpen: false,
+      searchPanelOpen: false,
       // Expanding = reading: clear unread flag for the active tab
       tabs: willExpand
         ? s.tabs.map((t) => t.id === activeTabId ? { ...t, hasUnread: false } : t)
@@ -319,7 +334,7 @@ export const useSessionStore = create<State>((set, get) => ({
     if (s.marketplaceOpen) {
       set({ marketplaceOpen: false })
     } else {
-      set({ isExpanded: false, marketplaceOpen: true })
+      set({ isExpanded: false, marketplaceOpen: true, searchPanelOpen: false })
       get().loadMarketplace()
     }
   },
@@ -415,6 +430,7 @@ export const useSessionStore = create<State>((set, get) => ({
     set((s) => ({
       activeTabId: next.id,
       marketplaceOpen: false,
+      searchPanelOpen: false,
       tabs: s.tabs.map((t) => t.id === next.id ? { ...t, hasUnread: false } : t),
     }))
   },
@@ -427,6 +443,7 @@ export const useSessionStore = create<State>((set, get) => ({
     set((s) => ({
       activeTabId: prev.id,
       marketplaceOpen: false,
+      searchPanelOpen: false,
       tabs: s.tabs.map((t) => t.id === prev.id ? { ...t, hasUnread: false } : t),
     }))
   },
@@ -484,12 +501,27 @@ export const useSessionStore = create<State>((set, get) => ({
   },
 
   toggleHistoryPicker: () => {
-    set((s) => ({ historyPickerOpen: !s.historyPickerOpen }))
+    set((s) => ({ historyPickerOpen: !s.historyPickerOpen, searchPanelOpen: false }))
   },
 
   closeHistoryPicker: () => {
     set({ historyPickerOpen: false })
   },
+
+  toggleSearchPanel: () => {
+    const s = get()
+    if (s.searchPanelOpen) {
+      set({ searchPanelOpen: false })
+    } else {
+      set({ isExpanded: false, searchPanelOpen: true, marketplaceOpen: false, historyPickerOpen: false })
+      // Lazy-trigger indexing on first open
+      window.clui.triggerSearchIndex()
+    }
+  },
+
+  closeSearchPanel: () => set({ searchPanelOpen: false }),
+
+  setSearchIndexStatus: (status: SearchIndexStatus) => set({ searchIndexStatus: status }),
 
   closeTab: (tabId) => {
     window.clui.closeTab(tabId).catch(() => {})

@@ -10,7 +10,8 @@ export default defineConfig({
       outDir: 'dist/main',
       rollupOptions: {
         input: {
-          index: resolve(__dirname, 'src/main/index.ts')
+          index: resolve(__dirname, 'src/main/index.ts'),
+          'search-worker': resolve(__dirname, 'src/main/search/search-worker.ts'),
         }
       }
     }

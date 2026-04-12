@@ -10,6 +10,7 @@ import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './m
 import { log as _log, LOG_FILE, flushLogs } from './logger'
 import { getCliEnv } from './cli-env'
 import { autoUpdater } from 'electron-updater'
+import { SearchManager } from './search/search-manager'
 import { IPC, OVERLAY_BAR_WIDTH, OVERLAY_PILL_HEIGHT, OVERLAY_PILL_BOTTOM_MARGIN } from '../shared/types'
 import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions } from '../shared/types'
 
@@ -154,6 +155,21 @@ function broadcast(channel: string, ...args: unknown[]): void {
   }
 }
 
+// ─── Search ───
+
+const searchManager = new SearchManager((status) => {
+  broadcast(IPC.SEARCH_INDEX_STATUS, status)
+})
+
+ipcMain.handle(IPC.SEARCH_SESSIONS, async (_e, query: string) => {
+  searchManager.ensureReady()
+  return searchManager.search(query, 10)
+})
+
+ipcMain.on(IPC.SEARCH_INDEX_STATUS, () => {
+  searchManager.ensureReady()
+})
+
 function snapshotWindowState(reason: string): void {
   if (!SPACES_DEBUG) return
   if (!mainWindow || mainWindow.isDestroyed()) {
@@ -253,7 +269,10 @@ function createWindow(): void {
     }
   })
 
-  app.on('before-quit', () => { forceQuit = true })
+  app.on('before-quit', () => {
+    forceQuit = true
+    searchManager.dispose()
+  })
   mainWindow.on('close', (e) => {
     if (!forceQuit) {
       e.preventDefault()
@@ -1857,7 +1876,7 @@ app.whenReady().then(async () => {
     if (pendingUpdateVersion) {
       items.push({
         label: `Restart to update (v${pendingUpdateVersion})`,
-        click: () => { forceQuit = true; autoUpdater.quitAndInstall() },
+        click: () => { setImmediate(() => { forceQuit = true; autoUpdater.quitAndInstall() }) },
       })
     }
     items.push({ label: 'Quit', click: () => { app.quit() } })
@@ -1890,8 +1909,13 @@ app.whenReady().then(async () => {
 
   ipcMain.handle(IPC.CHECK_FOR_UPDATE, () => autoUpdater.checkForUpdates())
   ipcMain.handle(IPC.INSTALL_UPDATE, () => {
-    forceQuit = true
-    autoUpdater.quitAndInstall()
+    // Defer quitAndInstall so the IPC response is sent before the app quits.
+    // Calling it synchronously inside handle() deadlocks: the renderer awaits
+    // the response while quitAndInstall() tries to close the window mid-reply.
+    setImmediate(() => {
+      forceQuit = true
+      autoUpdater.quitAndInstall()
+    })
   })
 
   // Initial check + periodic check every 30 minutes

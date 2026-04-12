@@ -134,6 +134,13 @@ export function useKeyboardShortcuts({
         return
       }
 
+      // ─── Cmd + Shift + F — Toggle search panel ───
+      if (meta && shift && key === 'f') {
+        e.preventDefault()
+        useSessionStore.getState().toggleSearchPanel()
+        return
+      }
+
       // ─── Cmd + Shift + H — Toggle session history ───
       if (meta && shift && key === 'h') {
         e.preventDefault()
