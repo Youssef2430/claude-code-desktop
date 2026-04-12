@@ -33,9 +33,8 @@ export class SearchManager {
     }
 
     // Spawn the worker from the compiled output.
-    // The worker is emitted as a separate main-process entry ('search-worker'),
-    // so it lands in the parent directory of this compiled search module.
-    const workerPath = join(__dirname, '..', 'search-worker.js')
+    // Both index.js and search-worker.js are emitted flat into dist/main/.
+    const workerPath = join(__dirname, 'search-worker.js')
     this.worker = new Worker(workerPath)
     this.building = true
 
