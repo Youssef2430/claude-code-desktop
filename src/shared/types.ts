@@ -434,6 +434,7 @@ export const IPC = {
 
   // Search
   SEARCH_SESSIONS: 'clui:search-sessions',
+  SEARCH_BUILD_INDEX: 'clui:search-build-index',
   SEARCH_INDEX_STATUS: 'clui:search-index-status',
 
   // BTW side question

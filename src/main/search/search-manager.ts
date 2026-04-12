@@ -13,7 +13,8 @@ export class SearchManager {
   private worker: Worker | null = null
   private indexReady = false
   private building = false
-  private pendingSearches: Array<{ resolve: (results: SearchResult[]) => void; reject: (err: Error) => void }> = []
+  private nextRequestId = 1
+  private pendingSearches = new Map<number, { resolve: (results: SearchResult[]) => void; reject: (err: Error) => void }>()
   private onStatus: (status: SearchIndexStatus) => void
 
   constructor(onStatus: (status: SearchIndexStatus) => void) {
@@ -31,8 +32,10 @@ export class SearchManager {
       return
     }
 
-    // Spawn the worker from the compiled output
-    const workerPath = join(__dirname, 'search-worker.js')
+    // Spawn the worker from the compiled output.
+    // The worker is emitted as a separate main-process entry ('search-worker'),
+    // so it lands in the parent directory of this compiled search module.
+    const workerPath = join(__dirname, '..', 'search-worker.js')
     this.worker = new Worker(workerPath)
     this.building = true
 
@@ -54,8 +57,11 @@ export class SearchManager {
           break
 
         case 'search-results': {
-          const pending = this.pendingSearches.shift()
-          if (pending) pending.resolve(msg.results as SearchResult[])
+          const pending = this.pendingSearches.get(msg.requestId as number)
+          if (pending) {
+            this.pendingSearches.delete(msg.requestId as number)
+            pending.resolve(msg.results as SearchResult[])
+          }
           break
         }
       }
@@ -87,15 +93,16 @@ export class SearchManager {
       return []
     }
 
+    const requestId = this.nextRequestId++
+
     return new Promise<SearchResult[]>((resolve, reject) => {
-      this.pendingSearches.push({ resolve, reject })
-      this.worker!.postMessage({ type: 'search', query, topK })
+      this.pendingSearches.set(requestId, { resolve, reject })
+      this.worker!.postMessage({ type: 'search', query, topK, requestId })
 
       // Timeout: don't hang forever
       setTimeout(() => {
-        const idx = this.pendingSearches.findIndex((p) => p.resolve === resolve)
-        if (idx !== -1) {
-          this.pendingSearches.splice(idx, 1)
+        if (this.pendingSearches.has(requestId)) {
+          this.pendingSearches.delete(requestId)
           resolve([]) // Timeout → empty results, don't crash
         }
       }, 10_000)
@@ -123,9 +130,9 @@ export class SearchManager {
   }
 
   private rejectAllPending(err: Error): void {
-    for (const pending of this.pendingSearches) {
+    for (const pending of this.pendingSearches.values()) {
       pending.resolve([]) // Resolve with empty rather than rejecting — no UI errors
     }
-    this.pendingSearches = []
+    this.pendingSearches.clear()
   }
 }

@@ -118,7 +118,7 @@ const api: CluiAPI = {
   setPermissionMode: (mode) => ipcRenderer.send(IPC.SET_PERMISSION_MODE, mode),
   // Search
   searchSessions: (query: string) => ipcRenderer.invoke(IPC.SEARCH_SESSIONS, query),
-  triggerSearchIndex: () => ipcRenderer.send(IPC.SEARCH_INDEX_STATUS),
+  triggerSearchIndex: () => ipcRenderer.send(IPC.SEARCH_BUILD_INDEX),
   onSearchIndexStatus: (cb: (status: SearchIndexStatus) => void) => {
     const handler = (_e: Electron.IpcRendererEvent, status: SearchIndexStatus) => cb(status)
     ipcRenderer.on(IPC.SEARCH_INDEX_STATUS, handler)

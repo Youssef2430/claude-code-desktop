@@ -166,7 +166,7 @@ ipcMain.handle(IPC.SEARCH_SESSIONS, async (_e, query: string) => {
   return searchManager.search(query, 10)
 })
 
-ipcMain.on(IPC.SEARCH_INDEX_STATUS, () => {
+ipcMain.on(IPC.SEARCH_BUILD_INDEX, () => {
   searchManager.ensureReady()
 })
 

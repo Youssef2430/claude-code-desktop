@@ -3,31 +3,8 @@ import { motion, AnimatePresence } from 'framer-motion'
 import { MagnifyingGlass, SpinnerGap, X, Clock, FolderSimple, ArrowRight } from '@phosphor-icons/react'
 import { useSessionStore } from '../stores/sessionStore'
 import { useColors } from '../theme'
+import { shortPath, timeAgo } from '../utils/format'
 import type { SearchResult } from '../../shared/types'
-
-/** Derive a short project name from a full path or encoded dir. */
-function shortPath(p: string): string {
-  if (!p) return ''
-  if (p.startsWith('-') && !p.includes('/')) {
-    const parts = p.split('-').filter(Boolean)
-    return parts[parts.length - 1] || p
-  }
-  const parts = p.replace(/\/+$/, '').split('/')
-  return parts[parts.length - 1] || p
-}
-
-/** Format a timestamp as relative time. */
-function timeAgo(timestamp: string): string {
-  const now = Date.now()
-  const then = new Date(timestamp).getTime()
-  const diffSec = Math.floor((now - then) / 1000)
-  if (diffSec < 60) return 'just now'
-  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`
-  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`
-  if (diffSec < 604800) return `${Math.floor(diffSec / 86400)}d ago`
-  if (diffSec < 2592000) return `${Math.floor(diffSec / 604800)}w ago`
-  return new Date(timestamp).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
-}
 
 /** Confidence label from score. */
 function confidenceLabel(score: number): string {
@@ -47,31 +24,50 @@ export function SearchPanel() {
 
   const inputRef = useRef<HTMLInputElement>(null)
   const debounceRef = useRef<ReturnType<typeof setTimeout>>()
+  const isMountedRef = useRef(true)
+  const searchRequestIdRef = useRef(0)
 
   useEffect(() => {
     const t = setTimeout(() => inputRef.current?.focus(), 60)
     return () => clearTimeout(t)
   }, [])
 
-  useEffect(() => () => clearTimeout(debounceRef.current), [])
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+      clearTimeout(debounceRef.current)
+      searchRequestIdRef.current += 1
+    }
+  }, [])
 
   const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) {
+    const trimmedQuery = q.trim()
+
+    if (!trimmedQuery) {
+      searchRequestIdRef.current += 1
       setResults([])
       setSearching(false)
       setHasSearched(false)
       return
     }
+
+    const requestId = ++searchRequestIdRef.current
     setSearching(true)
+
     try {
-      const res = await window.clui.searchSessions(q.trim())
+      const res = await window.clui.searchSessions(trimmedQuery)
+      if (!isMountedRef.current || requestId !== searchRequestIdRef.current) return
       setResults(res)
       setHasSearched(true)
     } catch {
+      if (!isMountedRef.current || requestId !== searchRequestIdRef.current) return
       setResults([])
       setHasSearched(true)
     } finally {
-      setSearching(false)
+      if (isMountedRef.current && requestId === searchRequestIdRef.current) {
+        setSearching(false)
+      }
     }
   }, [])
 
@@ -136,6 +132,8 @@ export function SearchPanel() {
             </span>
           )}
           <button
+            type="button"
+            aria-label="Close search panel"
             onClick={closeSearchPanel}
             style={{
               background: 'none', border: 'none', cursor: 'pointer',
@@ -192,6 +190,8 @@ export function SearchPanel() {
           />
           {query && (
             <button
+              type="button"
+              aria-label="Clear search query"
               onClick={() => { setQuery(''); setResults([]); setHasSearched(false); inputRef.current?.focus() }}
               style={{
                 background: 'none', border: 'none', cursor: 'pointer',

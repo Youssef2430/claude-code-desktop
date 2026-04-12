@@ -7,9 +7,9 @@
  */
 
 import { parentPort } from 'worker_threads'
-import { join } from 'path'
+import { join, dirname } from 'path'
 import { homedir } from 'os'
-import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, createReadStream } from 'fs'
+import { existsSync, readdirSync, statSync, readFileSync, writeFileSync, mkdirSync, createReadStream } from 'fs'
 import { createInterface } from 'readline'
 import type { SearchResult, SearchIndexStatus } from '../../shared/types'
 
@@ -32,7 +32,7 @@ interface IndexFile {
 
 type InMessage =
   | { type: 'build-index' }
-  | { type: 'search'; query: string; topK: number }
+  | { type: 'search'; query: string; topK: number; requestId: number }
   | { type: 'shutdown' }
 
 // ─── State ───
@@ -52,8 +52,8 @@ function postStatus(status: SearchIndexStatus): void {
   parentPort?.postMessage({ type: 'index-status', status })
 }
 
-function postResults(results: SearchResult[]): void {
-  parentPort?.postMessage({ type: 'search-results', results })
+function postResults(results: SearchResult[], requestId: number): void {
+  parentPort?.postMessage({ type: 'search-results', results, requestId })
 }
 
 /** L2-normalize a vector in-place and return it. */
@@ -214,6 +214,7 @@ function loadCachedIndex(): void {
 
 function saveCachedIndex(): void {
   try {
+    mkdirSync(dirname(INDEX_PATH), { recursive: true })
     writeFileSync(INDEX_PATH, JSON.stringify(index), 'utf-8')
   } catch { /* disk full or permission error — continue without cache */ }
 }
@@ -377,28 +378,46 @@ async function search(query: string, topK: number): Promise<SearchResult[]> {
 
 // ─── Message handler ───
 
-parentPort?.on('message', async (msg: InMessage) => {
+// Serialize all async message processing to prevent out-of-order responses
+let messageQueue: Promise<void> = Promise.resolve()
+
+function enqueueMessageTask(task: () => Promise<void>): void {
+  messageQueue = messageQueue
+    .catch(() => {
+      // Keep the queue alive after a previous task failure.
+    })
+    .then(task)
+}
+
+parentPort?.on('message', (msg: InMessage) => {
   switch (msg.type) {
     case 'build-index':
-      try {
-        await buildIndex()
-      } catch (err) {
-        postStatus({ state: 'error', error: `Index build failed: ${err}` })
-      }
+      enqueueMessageTask(async () => {
+        try {
+          await buildIndex()
+        } catch (err) {
+          postStatus({ state: 'error', error: `Index build failed: ${err}` })
+        }
+      })
       break
 
     case 'search':
-      try {
-        const results = await search(msg.query, msg.topK)
-        postResults(results)
-      } catch {
-        postResults([])
-      }
+      enqueueMessageTask(async () => {
+        try {
+          const results = await search(msg.query, msg.topK)
+          postResults(results, msg.requestId)
+        } catch {
+          postResults([], msg.requestId)
+        }
+      })
       break
 
     case 'shutdown':
-      pipeline = null
-      process.exit(0)
+      enqueueMessageTask(async () => {
+        pipeline = null
+        process.exit(0)
+      })
+      break
   }
 })
 

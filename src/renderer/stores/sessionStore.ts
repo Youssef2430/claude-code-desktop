@@ -68,6 +68,9 @@ interface State {
   marketplaceSearch: string
   marketplaceFilter: string
 
+  // Copy feedback state (shows "Copied" indicator on the message copied via shortcut)
+  copiedMessageId: string | null
+
   // Search state
   searchPanelOpen: boolean
   searchIndexStatus: SearchIndexStatus
@@ -218,6 +221,9 @@ export const useSessionStore = create<State>((set, get) => ({
 
   // History picker
   historyPickerOpen: false,
+
+  // Copy feedback
+  copiedMessageId: null,
 
   // Search
   searchPanelOpen: false,
@@ -495,6 +501,14 @@ export const useSessionStore = create<State>((set, get) => ({
       const msg = tab.messages[i]
       if (msg.role === 'assistant' && !msg.toolName) {
         navigator.clipboard.writeText(msg.content).catch(() => {})
+        // Show "Copied" feedback on the message's CopyButton
+        set({ copiedMessageId: msg.id })
+        setTimeout(() => {
+          // Only clear if it's still the same message (avoid races)
+          if (get().copiedMessageId === msg.id) {
+            set({ copiedMessageId: null })
+          }
+        }, 1500)
         return
       }
     }
