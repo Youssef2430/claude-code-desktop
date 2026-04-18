@@ -32,9 +32,13 @@ function DotGridLoader({ progress, accent }: { progress: number; accent: string 
   const targetRef = useRef(progress)
   const smoothRef = useRef(0)
   const rafRef = useRef<ReturnType<typeof requestAnimationFrame>>()
+  const kickRef = useRef<(() => void) | null>(null)
 
-  // Keep target in sync
-  useEffect(() => { targetRef.current = progress }, [progress])
+  // Keep target in sync and restart the rAF loop if it stopped
+  useEffect(() => {
+    targetRef.current = progress
+    kickRef.current?.()
+  }, [progress])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -49,25 +53,35 @@ function DotGridLoader({ progress, accent }: { progress: number; accent: string 
     temp.fillStyle = accent
     const accentRgb = temp.fillStyle // normalised hex
 
+    let lastW = 0
+    let lastDpr = 0
+
     const draw = () => {
       // Lerp toward target
       const target = targetRef.current
       const prev = smoothRef.current
-      smoothRef.current = Math.abs(target - prev) < 0.3
-        ? target
-        : prev + (target - prev) * 0.12
+      const stillAnimating = Math.abs(target - prev) > 0.3
+      smoothRef.current = stillAnimating
+        ? prev + (target - prev) * 0.12
+        : target
 
       const w = wrap.clientWidth
       const dpr = window.devicePixelRatio || 1
-      const cols = Math.floor((w + GAP) / STEP)
+      const cols = Math.max(1, Math.floor((w + GAP) / STEP))
       const gridW = cols * DOT + (cols - 1) * GAP
       const gridH = ROWS * DOT + (ROWS - 1) * GAP
 
-      canvas.width = Math.round(gridW * dpr)
-      canvas.height = Math.round(gridH * dpr)
-      canvas.style.width = `${gridW}px`
-      canvas.style.height = `${gridH}px`
-      ctx.scale(dpr, dpr)
+      // Only resize canvas when dimensions actually change
+      if (w !== lastW || dpr !== lastDpr) {
+        lastW = w
+        lastDpr = dpr
+        canvas.width = Math.round(gridW * dpr)
+        canvas.height = Math.round(gridH * dpr)
+        canvas.style.width = `${gridW}px`
+        canvas.style.height = `${gridH}px`
+      }
+
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
 
       const totalCells = cols * ROWS
       const filled = Math.round((smoothRef.current / 100) * totalCells)
@@ -87,11 +101,27 @@ function DotGridLoader({ progress, accent }: { progress: number; accent: string 
         }
       }
 
-      rafRef.current = requestAnimationFrame(draw)
+      // Only keep looping while smooth value is catching up to target
+      if (stillAnimating) {
+        rafRef.current = requestAnimationFrame(draw)
+      } else {
+        rafRef.current = undefined
+      }
     }
 
-    rafRef.current = requestAnimationFrame(draw)
-    return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current) }
+    // Kick off initial draw and re-draw whenever progress changes
+    const kick = () => {
+      if (!rafRef.current) rafRef.current = requestAnimationFrame(draw)
+    }
+    kick()
+    // Store kick so the target-sync effect can restart the loop
+    kickRef.current = kick
+
+    return () => {
+      if (rafRef.current) cancelAnimationFrame(rafRef.current)
+      rafRef.current = undefined
+      kickRef.current = null
+    }
   }, [accent])
 
   return (

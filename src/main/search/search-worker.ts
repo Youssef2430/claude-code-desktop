@@ -190,6 +190,7 @@ async function ensurePipeline(): Promise<void> {
   // Per-file `progress` percentage is misleading because small files hit 100%
   // instantly before the large model.onnx even starts.
   const fileProgress: Record<string, { loaded: number; total: number }> = {}
+  let lastReported = -1
   pipeline = await createPipeline('feature-extraction', 'Xenova/all-MiniLM-L6-v2', {
     quantized: true,
     progress_callback: (info: any) => {
@@ -198,7 +199,10 @@ async function ensurePipeline(): Promise<void> {
         const loaded = Object.values(fileProgress).reduce((s, f) => s + f.loaded, 0)
         const total = Object.values(fileProgress).reduce((s, f) => s + f.total, 0)
         const p = total > 0 ? Math.round((loaded / total) * 100) : 0
-        postStatus({ state: 'downloading', progress: p })
+        if (p !== lastReported) {
+          lastReported = p
+          postStatus({ state: 'downloading', progress: p })
+        }
       }
     },
   })
