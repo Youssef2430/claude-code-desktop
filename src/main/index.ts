@@ -12,7 +12,7 @@ import { getCliEnv } from './cli-env'
 import { autoUpdater } from 'electron-updater'
 import { SearchManager } from './search/search-manager'
 import { IPC, OVERLAY_BAR_WIDTH, OVERLAY_PILL_HEIGHT, OVERLAY_PILL_BOTTOM_MARGIN } from '../shared/types'
-import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions } from '../shared/types'
+import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions, Attachment } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -1330,6 +1330,64 @@ ipcMain.handle(IPC.OPEN_EXTERNAL, async (_event, url: string) => {
   }
 })
 
+const IMAGE_ATTACHMENT_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
+const ATTACHMENT_MIME_MAP: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.svg': 'image/svg+xml',
+  '.pdf': 'application/pdf',
+  '.txt': 'text/plain',
+  '.md': 'text/markdown',
+  '.json': 'application/json',
+  '.yaml': 'text/yaml',
+  '.toml': 'text/toml',
+}
+
+function buildAttachmentFromPath(filePath: string): Attachment | null {
+  const { basename, extname } = require('path')
+  const { readFileSync, statSync } = require('fs')
+
+  let stat
+  try {
+    stat = statSync(filePath)
+  } catch {
+    return null
+  }
+
+  if (!stat.isFile()) return null
+
+  const ext = extname(filePath).toLowerCase()
+  const mimeType = ATTACHMENT_MIME_MAP[ext] || 'application/octet-stream'
+  let dataUrl: string | undefined
+
+  // Generate preview data URL for images (max 2MB to keep IPC fast)
+  if (IMAGE_ATTACHMENT_EXTS.has(ext) && stat.size < 2 * 1024 * 1024) {
+    try {
+      const buf = readFileSync(filePath)
+      dataUrl = `data:${mimeType};base64,${buf.toString('base64')}`
+    } catch {}
+  }
+
+  return {
+    id: crypto.randomUUID(),
+    type: IMAGE_ATTACHMENT_EXTS.has(ext) ? 'image' : 'file',
+    name: basename(filePath),
+    path: filePath,
+    mimeType,
+    dataUrl,
+    size: stat.size,
+  }
+}
+
+function buildAttachmentsFromPaths(filePaths: string[]): Attachment[] {
+  return filePaths
+    .map((filePath) => buildAttachmentFromPath(filePath))
+    .filter((attachment): attachment is Attachment => !!attachment)
+}
+
 ipcMain.handle(IPC.ATTACH_FILES, async () => {
   if (!mainWindow) return null
   // macOS: activate app so unparented dialog appears on top
@@ -1347,41 +1405,12 @@ ipcMain.handle(IPC.ATTACH_FILES, async () => {
     : await dialog.showOpenDialog(mainWindow, options)
   if (result.canceled || result.filePaths.length === 0) return null
 
-  const { basename, extname } = require('path')
-  const { readFileSync, statSync } = require('fs')
+  return buildAttachmentsFromPaths(result.filePaths)
+})
 
-  const IMAGE_EXTS = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg'])
-  const mimeMap: Record<string, string> = {
-    '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg',
-    '.gif': 'image/gif', '.webp': 'image/webp', '.svg': 'image/svg+xml',
-    '.pdf': 'application/pdf', '.txt': 'text/plain', '.md': 'text/markdown',
-    '.json': 'application/json', '.yaml': 'text/yaml', '.toml': 'text/toml',
-  }
-
-  return result.filePaths.map((fp: string) => {
-    const ext = extname(fp).toLowerCase()
-    const mime = mimeMap[ext] || 'application/octet-stream'
-    const stat = statSync(fp)
-    let dataUrl: string | undefined
-
-    // Generate preview data URL for images (max 2MB to keep IPC fast)
-    if (IMAGE_EXTS.has(ext) && stat.size < 2 * 1024 * 1024) {
-      try {
-        const buf = readFileSync(fp)
-        dataUrl = `data:${mime};base64,${buf.toString('base64')}`
-      } catch {}
-    }
-
-    return {
-      id: crypto.randomUUID(),
-      type: IMAGE_EXTS.has(ext) ? 'image' : 'file',
-      name: basename(fp),
-      path: fp,
-      mimeType: mime,
-      dataUrl,
-      size: stat.size,
-    }
-  })
+ipcMain.handle(IPC.HYDRATE_ATTACHMENTS, async (_event, filePaths: string[]) => {
+  if (!Array.isArray(filePaths) || filePaths.length === 0) return []
+  return buildAttachmentsFromPaths(filePaths)
 })
 
 ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {

@@ -184,7 +184,7 @@ function makeLocalTab(): TabState {
   return {
     id: crypto.randomUUID(),
     claudeSessionId: null,
-    status: 'idle',
+    status: 'connecting',
     activeRequestId: null,
     hasUnread: false,
     currentActivity: '',

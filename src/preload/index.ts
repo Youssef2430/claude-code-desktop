@@ -17,6 +17,7 @@ export interface CluiAPI {
   openExternal(url: string): Promise<boolean>
   openInTerminal(sessionId: string | null, projectPath?: string): Promise<boolean>
   attachFiles(): Promise<Attachment[] | null>
+  hydrateAttachments(paths: string[]): Promise<Attachment[]>
   takeScreenshot(): Promise<Attachment | null>
   pasteImage(dataUrl: string): Promise<Attachment | null>
   transcribeAudio(audioBase64: string): Promise<{ error: string | null; errorType?: string; transcript: string | null }>
@@ -94,6 +95,7 @@ const api: CluiAPI = {
   openExternal: (url) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
   openInTerminal: (sessionId, projectPath) => ipcRenderer.invoke(IPC.OPEN_IN_TERMINAL, { sessionId, projectPath }),
   attachFiles: () => ipcRenderer.invoke(IPC.ATTACH_FILES),
+  hydrateAttachments: (paths) => ipcRenderer.invoke(IPC.HYDRATE_ATTACHMENTS, paths),
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),
   transcribeAudio: (audioBase64) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64),

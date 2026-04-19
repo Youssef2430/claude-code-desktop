@@ -377,6 +377,7 @@ export const IPC = {
   OPEN_EXTERNAL: 'clui:open-external',
   OPEN_IN_TERMINAL: 'clui:open-in-terminal',
   ATTACH_FILES: 'clui:attach-files',
+  HYDRATE_ATTACHMENTS: 'clui:hydrate-attachments',
   TAKE_SCREENSHOT: 'clui:take-screenshot',
   TRANSCRIBE_AUDIO: 'clui:transcribe-audio',
   PASTE_IMAGE: 'clui:paste-image',

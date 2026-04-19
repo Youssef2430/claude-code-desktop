@@ -67,7 +67,7 @@ export default function App() {
         }))
         window.clui.createTab().then(({ tabId }) => {
           useSessionStore.setState((s) => ({
-            tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId } : t)),
+            tabs: s.tabs.map((t, i) => (i === 0 ? { ...t, id: tabId, status: 'idle' } : t)),
             activeTabId: tabId,
           }))
         }).catch(() => {})

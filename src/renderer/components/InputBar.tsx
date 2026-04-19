@@ -6,6 +6,7 @@ import { AttachmentChips } from './AttachmentChips'
 import { SlashCommandMenu, getFilteredCommandsWithExtras, type SlashCommand } from './SlashCommandMenu'
 import { FileMentionMenu, getFileIcon, type FileMentionMenuHandle } from './FileMentionMenu'
 import { useColors } from '../theme'
+import type { Attachment } from '../../shared/types'
 
 const INPUT_MIN_HEIGHT = 20
 const INPUT_MAX_HEIGHT = 140
@@ -152,6 +153,30 @@ function findMentionAtCursor(text: string, cursor: number): [number, number] | n
   return null
 }
 
+function isEditableTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (target instanceof HTMLTextAreaElement) return true
+  if (target instanceof HTMLInputElement) {
+    const type = target.type.toLowerCase()
+    return type !== 'button' && type !== 'checkbox' && type !== 'radio' && type !== 'submit'
+  }
+  return target.isContentEditable
+}
+
+function hasFilePayload(dataTransfer: DataTransfer | null): boolean {
+  if (!dataTransfer) return false
+  return Array.from(dataTransfer.types).includes('Files')
+}
+
+function readFileAsDataUrl(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read file'))
+    reader.onload = () => resolve(reader.result as string)
+    reader.readAsDataURL(file)
+  })
+}
+
 type VoiceState = 'idle' | 'recording' | 'transcribing'
 
 export interface InputBarHandle {
@@ -175,6 +200,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const [mentionIndex, setMentionIndex] = useState(0)
   const [mentionStart, setMentionStart] = useState<number>(-1)
   const [isMultiLine, setIsMultiLine] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const measureRef = useRef<HTMLTextAreaElement | null>(null)
@@ -184,6 +210,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const mentionMenuRef = useRef<FileMentionMenuHandle>(null)
   const mentionCountRef = useRef(0)
   const mirrorRef = useRef<HTMLDivElement>(null)
+  const dragDepthRef = useRef(0)
   const [selectionPos, setSelectionPos] = useState(0)
   const [inputFocused, setInputFocused] = useState(false)
 
@@ -366,6 +393,71 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     setMentionFilter(null)
     setMentionStart(-1)
   }, [])
+
+  const syncInputState = useCallback((value: string, cursorPos: number) => {
+    setInput(value)
+    setSelectionPos(cursorPos)
+    updateSlashFilter(value)
+    updateMentionFilter(value, cursorPos)
+  }, [updateMentionFilter, updateSlashFilter])
+
+  const insertTextAtSelection = useCallback((text: string) => {
+    const el = textareaRef.current
+    const start = el?.selectionStart ?? selectionPos
+    const end = el?.selectionEnd ?? selectionPos
+    const nextValue = input.slice(0, start) + text + input.slice(end)
+    const nextCursor = start + text.length
+
+    syncInputState(nextValue, nextCursor)
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) return
+      textareaRef.current.focus()
+      textareaRef.current.selectionStart = nextCursor
+      textareaRef.current.selectionEnd = nextCursor
+    })
+  }, [input, selectionPos, syncInputState])
+
+  const attachPastedImages = useCallback(async (clipboardData: DataTransfer | null) => {
+    const items = clipboardData?.items
+    if (!items) return false
+
+    const attachments: Attachment[] = []
+    for (const item of Array.from(items)) {
+      if (!item.type.startsWith('image/')) continue
+      const blob = item.getAsFile()
+      if (!blob) continue
+      const dataUrl = await readFileAsDataUrl(blob)
+      const attachment = await window.clui.pasteImage(dataUrl)
+      if (attachment) attachments.push(attachment)
+    }
+
+    if (attachments.length === 0) return false
+    addAttachments(attachments)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+    return true
+  }, [addAttachments])
+
+  const hydrateDroppedFile = useCallback(async (file: File) => {
+    if (file.path) {
+      const attachments = await window.clui.hydrateAttachments([file.path])
+      return attachments[0] ?? null
+    }
+    if (!file.type.startsWith('image/')) return null
+    const dataUrl = await readFileAsDataUrl(file)
+    return window.clui.pasteImage(dataUrl)
+  }, [])
+
+  const attachDroppedFiles = useCallback(async (files: File[]) => {
+    const attachments: Attachment[] = []
+    for (const file of files) {
+      const attachment = await hydrateDroppedFile(file)
+      if (attachment) attachments.push(attachment)
+    }
+    if (attachments.length === 0) return false
+    addAttachments(attachments)
+    requestAnimationFrame(() => textareaRef.current?.focus())
+    return true
+  }, [addAttachments, hydrateDroppedFile])
 
   const handleMentionSelect = useCallback((path: string, isDirectory: boolean) => {
     if (isDirectory) {
@@ -700,10 +792,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const value = e.target.value
     const cursorPos = e.target.selectionStart ?? value.length
-    setInput(value)
-    setSelectionPos(cursorPos)
-    updateSlashFilter(value)
-    updateMentionFilter(value, cursorPos)
+    syncInputState(value, cursorPos)
   }
 
   // Track cursor position changes (arrow keys, clicks) for the synthetic caret
@@ -714,25 +803,97 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   }
 
   // ─── Paste image ───
-  const handlePaste = useCallback(async (e: React.ClipboardEvent) => {
-    const items = e.clipboardData?.items
-    if (!items) return
-    for (const item of Array.from(items)) {
-      if (item.type.startsWith('image/')) {
-        e.preventDefault()
-        const blob = item.getAsFile()
-        if (!blob) return
-        const reader = new FileReader()
-        reader.onload = async () => {
-          const dataUrl = reader.result as string
-          const attachment = await window.clui.pasteImage(dataUrl)
-          if (attachment) addAttachments([attachment])
-        }
-        reader.readAsDataURL(blob)
+  const handlePaste = useCallback((e: React.ClipboardEvent) => {
+    const hasImage = Array.from(e.clipboardData?.items ?? []).some((item) => item.type.startsWith('image/'))
+    if (!hasImage) return
+    e.preventDefault()
+    void attachPastedImages(e.clipboardData)
+  }, [attachPastedImages])
+
+  const handleDragEnter = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFilePayload(e.dataTransfer)) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragDepthRef.current += 1
+    setIsDragOver(true)
+    window.clui.setIgnoreMouseEvents(false)
+  }, [])
+
+  const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFilePayload(e.dataTransfer)) return
+    e.preventDefault()
+    e.stopPropagation()
+    e.dataTransfer.dropEffect = 'copy'
+    if (!isDragOver) setIsDragOver(true)
+    window.clui.setIgnoreMouseEvents(false)
+  }, [isDragOver])
+
+  const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFilePayload(e.dataTransfer)) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragDepthRef.current = Math.max(0, dragDepthRef.current - 1)
+    if (dragDepthRef.current === 0) setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    if (!hasFilePayload(e.dataTransfer) && !e.dataTransfer.getData('text/plain')) return
+    e.preventDefault()
+    e.stopPropagation()
+    dragDepthRef.current = 0
+    setIsDragOver(false)
+
+    const files = Array.from(e.dataTransfer.files ?? [])
+    const droppedText = e.dataTransfer.getData('text/plain')
+
+    void (async () => {
+      if (files.length > 0) {
+        const attached = await attachDroppedFiles(files)
+        if (attached) return
+      }
+      if (droppedText) {
+        insertTextAtSelection(droppedText)
         return
       }
+      requestAnimationFrame(() => textareaRef.current?.focus())
+    })()
+  }, [attachDroppedFiles, insertTextAtSelection])
+
+  useEffect(() => {
+    const handleDocumentPaste = (e: ClipboardEvent) => {
+      if (e.target === textareaRef.current) return
+      if (isEditableTarget(e.target)) return
+
+      const clipboardData = e.clipboardData
+      const hasImage = Array.from(clipboardData?.items ?? []).some((item) => item.type.startsWith('image/'))
+      if (hasImage) {
+        e.preventDefault()
+        void attachPastedImages(clipboardData)
+        return
+      }
+
+      const text = clipboardData?.getData('text/plain')
+      if (!text) return
+      e.preventDefault()
+      insertTextAtSelection(text)
     }
-  }, [addAttachments])
+
+    document.addEventListener('paste', handleDocumentPaste, true)
+    return () => document.removeEventListener('paste', handleDocumentPaste, true)
+  }, [attachPastedImages, insertTextAtSelection])
+
+  useEffect(() => {
+    const handleWindowFocus = () => {
+      requestAnimationFrame(() => {
+        const active = document.activeElement
+        if (active && active !== document.body && active !== textareaRef.current && isEditableTarget(active)) return
+        textareaRef.current?.focus()
+      })
+    }
+
+    window.addEventListener('focus', handleWindowFocus)
+    return () => window.removeEventListener('focus', handleWindowFocus)
+  }, [])
 
   // ─── Voice ───
   const cancelledRef = useRef(false)
@@ -793,7 +954,21 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const hasAttachments = attachments.length > 0
 
   return (
-    <div ref={wrapperRef} data-clui-ui className="flex flex-col w-full relative">
+    <div
+      ref={wrapperRef}
+      data-clui-ui
+      className="flex flex-col w-full relative"
+      onDragEnter={handleDragEnter}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+      style={{
+        borderRadius: 18,
+        background: isDragOver ? colors.surfaceSecondary : 'transparent',
+        boxShadow: isDragOver ? `0 0 0 1px ${colors.accent} inset` : 'none',
+        transition: 'background 120ms ease, box-shadow 120ms ease',
+      }}
+    >
       {/* Slash command menu */}
       <AnimatePresence>
         {showSlashMenu && (
