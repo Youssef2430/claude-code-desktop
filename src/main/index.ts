@@ -1413,6 +1413,20 @@ ipcMain.handle(IPC.HYDRATE_ATTACHMENTS, async (_event, filePaths: string[]) => {
   return buildAttachmentsFromPaths(filePaths)
 })
 
+ipcMain.handle(IPC.GET_CURSOR_WINDOW_POINT, async () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { x: -1, y: -1, insideWindow: false }
+  }
+
+  const cursor = screen.getCursorScreenPoint()
+  const bounds = mainWindow.getBounds()
+  const x = cursor.x - bounds.x
+  const y = cursor.y - bounds.y
+  const insideWindow = x >= 0 && y >= 0 && x <= bounds.width && y <= bounds.height
+
+  return { x, y, insideWindow }
+})
+
 ipcMain.handle(IPC.TAKE_SCREENSHOT, async () => {
   if (!mainWindow) return null
 

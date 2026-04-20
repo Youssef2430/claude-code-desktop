@@ -79,33 +79,59 @@ export default function App() {
   useEffect(() => {
     if (!window.clui?.setIgnoreMouseEvents) return
     let lastIgnored: boolean | null = null
+    let forceInteractiveUntil = 0
 
-    const onMouseMove = (e: MouseEvent) => {
-      const el = document.elementFromPoint(e.clientX, e.clientY)
+    const setIgnored = (shouldIgnore: boolean) => {
+      if (shouldIgnore === lastIgnored) return
+      lastIgnored = shouldIgnore
+      if (shouldIgnore) {
+        window.clui.setIgnoreMouseEvents(true, { forward: true })
+      } else {
+        window.clui.setIgnoreMouseEvents(false)
+      }
+    }
+
+    const updateIgnoreState = (x: number, y: number) => {
+      if (Date.now() < forceInteractiveUntil) {
+        setIgnored(false)
+        return
+      }
+      const el = document.elementFromPoint(x, y)
       const isUI = !!(el && el.closest('[data-clui-ui]'))
       const shouldIgnore = !isUI
-      if (shouldIgnore !== lastIgnored) {
-        lastIgnored = shouldIgnore
-        if (shouldIgnore) {
-          window.clui.setIgnoreMouseEvents(true, { forward: true })
-        } else {
-          window.clui.setIgnoreMouseEvents(false)
-        }
-      }
+      setIgnored(shouldIgnore)
+    }
+
+    const onMouseMove = (e: MouseEvent) => {
+      updateIgnoreState(e.clientX, e.clientY)
+    }
+
+    const onMouseOver = (e: MouseEvent) => {
+      updateIgnoreState(e.clientX, e.clientY)
     }
 
     const onMouseLeave = () => {
-      if (lastIgnored !== true) {
-        lastIgnored = true
-        window.clui.setIgnoreMouseEvents(true, { forward: true })
-      }
+      if (Date.now() < forceInteractiveUntil) return
+      setIgnored(true)
+    }
+
+    const onForceInteractive = (event: Event) => {
+      const ttlMs = event instanceof CustomEvent && typeof event.detail?.ttlMs === 'number'
+        ? event.detail.ttlMs
+        : 220
+      forceInteractiveUntil = Date.now() + ttlMs
+      setIgnored(false)
     }
 
     document.addEventListener('mousemove', onMouseMove)
+    document.addEventListener('mouseover', onMouseOver)
     document.addEventListener('mouseleave', onMouseLeave)
+    window.addEventListener('clui:force-interactive', onForceInteractive)
     return () => {
       document.removeEventListener('mousemove', onMouseMove)
+      document.removeEventListener('mouseover', onMouseOver)
       document.removeEventListener('mouseleave', onMouseLeave)
+      window.removeEventListener('clui:force-interactive', onForceInteractive)
     }
   }, [])
 

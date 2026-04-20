@@ -382,6 +382,7 @@ export const IPC = {
   TRANSCRIBE_AUDIO: 'clui:transcribe-audio',
   PASTE_IMAGE: 'clui:paste-image',
   GET_DIAGNOSTICS: 'clui:get-diagnostics',
+  GET_CURSOR_WINDOW_POINT: 'clui:get-cursor-window-point',
   RESPOND_PERMISSION: 'clui:respond-permission',
   INIT_SESSION: 'clui:init-session',
   RESET_TAB_SESSION: 'clui:reset-tab-session',

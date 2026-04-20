@@ -20,6 +20,7 @@ export interface CluiAPI {
   hydrateAttachments(paths: string[]): Promise<Attachment[]>
   takeScreenshot(): Promise<Attachment | null>
   pasteImage(dataUrl: string): Promise<Attachment | null>
+  getCursorWindowPoint(): Promise<{ x: number; y: number; insideWindow: boolean }>
   transcribeAudio(audioBase64: string): Promise<{ error: string | null; errorType?: string; transcript: string | null }>
   fixWhisper(): Promise<{ ok: boolean; error?: string }>
   getDiagnostics(): Promise<any>
@@ -98,6 +99,7 @@ const api: CluiAPI = {
   hydrateAttachments: (paths) => ipcRenderer.invoke(IPC.HYDRATE_ATTACHMENTS, paths),
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),
+  getCursorWindowPoint: () => ipcRenderer.invoke(IPC.GET_CURSOR_WINDOW_POINT),
   transcribeAudio: (audioBase64) => ipcRenderer.invoke(IPC.TRANSCRIBE_AUDIO, audioBase64),
   fixWhisper: () => ipcRenderer.invoke(IPC.FIX_WHISPER),
   getDiagnostics: () => ipcRenderer.invoke(IPC.GET_DIAGNOSTICS),

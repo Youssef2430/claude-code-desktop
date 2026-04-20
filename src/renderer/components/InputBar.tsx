@@ -177,6 +177,10 @@ function readFileAsDataUrl(file: Blob): Promise<string> {
   })
 }
 
+function requestInteractiveWindow(ttlMs = 220): void {
+  window.dispatchEvent(new CustomEvent('clui:force-interactive', { detail: { ttlMs } }))
+}
+
 type VoiceState = 'idle' | 'recording' | 'transcribing'
 
 export interface InputBarHandle {
@@ -816,7 +820,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     e.stopPropagation()
     dragDepthRef.current += 1
     setIsDragOver(true)
-    window.clui.setIgnoreMouseEvents(false)
+    requestInteractiveWindow()
   }, [])
 
   const handleDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -825,7 +829,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     e.stopPropagation()
     e.dataTransfer.dropEffect = 'copy'
     if (!isDragOver) setIsDragOver(true)
-    window.clui.setIgnoreMouseEvents(false)
+    requestInteractiveWindow()
   }, [isDragOver])
 
   const handleDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
@@ -895,6 +899,41 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     return () => window.removeEventListener('focus', handleWindowFocus)
   }, [])
 
+  useEffect(() => {
+    let disposed = false
+
+    const pollCursor = async () => {
+      const wrapper = wrapperRef.current
+      if (!wrapper || disposed) return
+
+      const rect = wrapper.getBoundingClientRect()
+      if (rect.width === 0 || rect.height === 0) return
+
+      try {
+        const cursor = await window.clui.getCursorWindowPoint()
+        if (disposed || !cursor.insideWindow) return
+
+        const withinDropZone =
+          cursor.x >= rect.left &&
+          cursor.x <= rect.right &&
+          cursor.y >= rect.top &&
+          cursor.y <= rect.bottom
+
+        if (withinDropZone) {
+          requestInteractiveWindow()
+        }
+      } catch {
+        // Best-effort fallback for external drag sessions.
+      }
+    }
+
+    const interval = window.setInterval(() => { void pollCursor() }, 80)
+    return () => {
+      disposed = true
+      window.clearInterval(interval)
+    }
+  }, [])
+
   // ─── Voice ───
   const cancelledRef = useRef(false)
 
@@ -958,6 +997,10 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       ref={wrapperRef}
       data-clui-ui
       className="flex flex-col w-full relative"
+      onMouseEnter={() => requestInteractiveWindow()}
+      onMouseLeave={() => {
+        if (!isDragOver) window.clui.setIgnoreMouseEvents(true, { forward: true })
+      }}
       onDragEnter={handleDragEnter}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
