@@ -48,6 +48,9 @@
       "package.json",
       "!node_modules/@huggingface/transformers/.cache"
     ],
+    "asarUnpack": [
+      "node_modules/onnxruntime-node/**/*"
+    ],
     "publish": {
       "provider": "github",
       "owner": "Youssef2430",
