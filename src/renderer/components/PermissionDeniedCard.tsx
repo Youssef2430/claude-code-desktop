@@ -2,6 +2,7 @@ import React from 'react'
 import { motion } from 'framer-motion'
 import { ShieldWarning, Terminal, ArrowSquareOut } from '@phosphor-icons/react'
 import { useColors } from '../theme'
+import { openInPreferredTerminal } from '../utils/terminal'
 
 interface Props {
   tools: Array<{ toolName: string; toolUseId: string }>
@@ -15,7 +16,7 @@ export function PermissionDeniedCard({ tools, sessionId, projectPath, onDismiss 
 
   const handleOpenInCli = () => {
     if (sessionId) {
-      window.clui.openInTerminal(sessionId, projectPath)
+      openInPreferredTerminal(sessionId, projectPath)
     }
     onDismiss()
   }

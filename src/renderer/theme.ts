@@ -3,6 +3,7 @@
  * Colors derived from ChatCN oklch system and design-fixed.html reference.
  */
 import { create } from 'zustand'
+import type { PreferredTerminalId, TerminalId } from '../shared/types'
 
 // ─── Color palettes ───
 
@@ -280,17 +281,25 @@ export type ColorPalette = { [K in keyof typeof darkColors]: string }
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
+const TERMINAL_IDS: TerminalId[] = ['terminal', 'iterm', 'ghostty', 'alacritty']
+
+function isTerminalId(value: unknown): value is TerminalId {
+  return typeof value === 'string' && TERMINAL_IDS.includes(value as TerminalId)
+}
+
 interface ThemeState {
   isDark: boolean
   themeMode: ThemeMode
   soundEnabled: boolean
   expandedUI: boolean
+  preferredTerminalId: PreferredTerminalId
   /** OS-reported dark mode — used when themeMode is 'system' */
   _systemIsDark: boolean
   setIsDark: (isDark: boolean) => void
   setThemeMode: (mode: ThemeMode) => void
   setSoundEnabled: (enabled: boolean) => void
   setExpandedUI: (expanded: boolean) => void
+  setPreferredTerminalId: (terminalId: PreferredTerminalId) => void
   /** Called by OS theme change listener — updates system value */
   setSystemTheme: (isDark: boolean) => void
   /** Auto-update state */
@@ -321,7 +330,7 @@ function applyTheme(isDark: boolean): void {
 
 const SETTINGS_KEY = 'clui-settings'
 
-function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean } {
+function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean; preferredTerminalId: PreferredTerminalId } {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY)
     if (raw) {
@@ -330,13 +339,16 @@ function loadSettings(): { themeMode: ThemeMode; soundEnabled: boolean; expanded
         themeMode: ['light', 'dark'].includes(parsed.themeMode) ? parsed.themeMode : 'dark',
         soundEnabled: typeof parsed.soundEnabled === 'boolean' ? parsed.soundEnabled : true,
         expandedUI: typeof parsed.expandedUI === 'boolean' ? parsed.expandedUI : false,
+        preferredTerminalId: parsed.preferredTerminalId === 'auto' || isTerminalId(parsed.preferredTerminalId)
+          ? parsed.preferredTerminalId
+          : 'auto',
       }
     }
   } catch {}
-  return { themeMode: 'dark', soundEnabled: true, expandedUI: false }
+  return { themeMode: 'dark', soundEnabled: true, expandedUI: false, preferredTerminalId: 'auto' }
 }
 
-function saveSettings(s: { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean }): void {
+function saveSettings(s: { themeMode: ThemeMode; soundEnabled: boolean; expandedUI: boolean; preferredTerminalId: PreferredTerminalId }): void {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)) } catch {}
 }
 
@@ -347,6 +359,7 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
   themeMode: saved.themeMode,
   soundEnabled: saved.soundEnabled,
   expandedUI: saved.expandedUI,
+  preferredTerminalId: saved.preferredTerminalId,
   _systemIsDark: true,
   setIsDark: (isDark) => {
     set({ isDark })
@@ -356,15 +369,19 @@ export const useThemeStore = create<ThemeState>((set, get) => ({
     const resolved = mode === 'system' ? get()._systemIsDark : mode === 'dark'
     set({ themeMode: mode, isDark: resolved })
     applyTheme(resolved)
-    saveSettings({ themeMode: mode, soundEnabled: get().soundEnabled, expandedUI: get().expandedUI })
+    saveSettings({ themeMode: mode, soundEnabled: get().soundEnabled, expandedUI: get().expandedUI, preferredTerminalId: get().preferredTerminalId })
   },
   setSoundEnabled: (enabled) => {
     set({ soundEnabled: enabled })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: enabled, expandedUI: get().expandedUI })
+    saveSettings({ themeMode: get().themeMode, soundEnabled: enabled, expandedUI: get().expandedUI, preferredTerminalId: get().preferredTerminalId })
   },
   setExpandedUI: (expanded) => {
     set({ expandedUI: expanded })
-    saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: expanded })
+    saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: expanded, preferredTerminalId: get().preferredTerminalId })
+  },
+  setPreferredTerminalId: (terminalId) => {
+    set({ preferredTerminalId: terminalId })
+    saveSettings({ themeMode: get().themeMode, soundEnabled: get().soundEnabled, expandedUI: get().expandedUI, preferredTerminalId: terminalId })
   },
   setSystemTheme: (isDark) => {
     set({ _systemIsDark: isDark })

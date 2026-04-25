@@ -5,6 +5,7 @@ import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@p
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
+import { openInPreferredTerminal } from '../utils/terminal'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -298,7 +299,7 @@ export function StatusBar() {
   const hasExtraDirs = tab.additionalDirs.length > 0
 
   const handleOpenInTerminal = () => {
-    window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory)
+    openInPreferredTerminal(tab.claudeSessionId, tab.workingDirectory)
   }
 
   const handleDirClick = () => {

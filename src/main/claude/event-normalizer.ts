@@ -3,6 +3,8 @@ import type {
   NormalizedEvent,
   StreamEvent,
   InitEvent,
+  StatusEvent,
+  CompactBoundaryEvent,
   AssistantEvent,
   ResultEvent,
   RateLimitEvent,
@@ -46,7 +48,15 @@ export function normalize(raw: ClaudeEvent): NormalizedEvent[] {
   }
 }
 
-function normalizeSystem(event: InitEvent): NormalizedEvent[] {
+function normalizeSystem(event: InitEvent | StatusEvent | CompactBoundaryEvent): NormalizedEvent[] {
+  if (event.subtype === 'status') {
+    return normalizeStatus(event)
+  }
+
+  if (event.subtype === 'compact_boundary') {
+    return normalizeCompactBoundary(event)
+  }
+
   if (event.subtype !== 'init') return []
 
   return [{
@@ -57,6 +67,72 @@ function normalizeSystem(event: InitEvent): NormalizedEvent[] {
     mcpServers: event.mcp_servers || [],
     skills: event.skills || [],
     version: event.claude_code_version || 'unknown',
+  }]
+}
+
+function extractStatusText(event: StatusEvent | CompactBoundaryEvent): string {
+  const fromData = event.data && typeof event.data === 'object'
+    ? (
+        typeof event.data.message === 'string' ? event.data.message
+          : typeof event.data.status === 'string' ? event.data.status
+            : typeof event.data.content === 'string' ? event.data.content
+              : ''
+      )
+    : ''
+
+  if (typeof event.message === 'string' && event.message.trim()) return event.message
+  if (typeof event.status === 'string' && event.status.trim()) return event.status
+  if (typeof event.content === 'string' && event.content.trim()) return event.content
+  if (fromData.trim()) return fromData
+
+  return ''
+}
+
+function looksLikeCompaction(text: string, event: StatusEvent | CompactBoundaryEvent): boolean {
+  if (event.subtype === 'compact_boundary') return true
+
+  const haystack = [
+    text,
+    typeof event.status === 'string' ? event.status : '',
+    typeof event.message === 'string' ? event.message : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  return /\bcompact(?:ing|ed|ion)?\b|\bsummar(?:y|ize|izing|ized)\b|\bcontext\b/.test(haystack)
+}
+
+function normalizeStatus(event: StatusEvent): NormalizedEvent[] {
+  const message = extractStatusText(event) || 'Working...'
+  return [{
+    type: 'status_update',
+    message,
+    sessionId: event.session_id || null,
+    status: typeof event.status === 'string' ? event.status : undefined,
+    isCompaction: looksLikeCompaction(message, event),
+  }]
+}
+
+function normalizeCompactBoundary(event: CompactBoundaryEvent): NormalizedEvent[] {
+  const summary = extractStatusText(event) || undefined
+  const trigger = typeof event.trigger === 'string'
+    ? event.trigger
+    : typeof event.data?.trigger === 'string'
+      ? event.data.trigger
+      : undefined
+  const compactedMessages = typeof event.compacted_messages === 'number'
+    ? event.compacted_messages
+    : typeof event.data?.compacted_messages === 'number'
+      ? event.data.compacted_messages
+      : undefined
+
+  return [{
+    type: 'compact_boundary',
+    sessionId: event.session_id || null,
+    summary,
+    trigger,
+    compactedMessages,
   }]
 }
 

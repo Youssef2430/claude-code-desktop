@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, protocol, net } from 'electron'
+import { execFile, spawn } from 'child_process'
 import { join, resolve, normalize } from 'path'
 import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
 import { readdir } from 'fs/promises'
@@ -12,7 +13,7 @@ import { getCliEnv } from './cli-env'
 import { autoUpdater } from 'electron-updater'
 import { SearchManager } from './search/search-manager'
 import { IPC, OVERLAY_BAR_WIDTH, OVERLAY_PILL_HEIGHT, OVERLAY_PILL_BOTTOM_MARGIN } from '../shared/types'
-import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions } from '../shared/types'
+import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions, PreferredTerminalId, TerminalId, TerminalInstallation } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -160,6 +161,162 @@ function broadcast(channel: string, ...args: unknown[]): void {
 const searchManager = new SearchManager((status) => {
   broadcast(IPC.SEARCH_INDEX_STATUS, status)
 })
+
+// ─── Terminal detection / launch ───
+
+interface InstalledTerminal extends TerminalInstallation {
+  appPath: string
+  execPath?: string
+}
+
+const TERMINAL_CANDIDATES: Array<{
+  id: TerminalId
+  label: string
+  appNames: string[]
+  execPath?: (appPath: string) => string
+}> = [
+  {
+    id: 'terminal',
+    label: 'Terminal',
+    appNames: ['Terminal.app'],
+  },
+  {
+    id: 'iterm',
+    label: 'iTerm',
+    appNames: ['iTerm.app', 'iTerm2.app'],
+  },
+  {
+    id: 'ghostty',
+    label: 'Ghostty',
+    appNames: ['Ghostty.app'],
+  },
+  {
+    id: 'alacritty',
+    label: 'Alacritty',
+    appNames: ['Alacritty.app'],
+    execPath: (appPath) => join(appPath, 'Contents', 'MacOS', 'alacritty'),
+  },
+]
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)]
+}
+
+function resolveInstalledTerminalPath(appNames: string[]): string | null {
+  const candidates = uniquePaths(appNames.flatMap((appName) => [
+    join('/Applications', appName),
+    join('/System/Applications', appName),
+    join('/System/Applications/Utilities', appName),
+    join(homedir(), 'Applications', appName),
+  ]))
+
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate
+  }
+
+  return null
+}
+
+function getInstalledTerminals(): InstalledTerminal[] {
+  return TERMINAL_CANDIDATES.flatMap((terminal) => {
+    const appPath = resolveInstalledTerminalPath(terminal.appNames)
+    if (!appPath) return []
+
+    const execPath = terminal.execPath?.(appPath)
+    if (execPath && !existsSync(execPath)) return []
+
+    return [{
+      id: terminal.id,
+      label: terminal.label,
+      appPath,
+      ...(execPath ? { execPath } : {}),
+    }]
+  })
+}
+
+function pickInstalledTerminal(preferredId: PreferredTerminalId | TerminalId | null | undefined): InstalledTerminal | null {
+  const installed = getInstalledTerminals()
+  if (installed.length === 0) return null
+  if (!preferredId || preferredId === 'auto') return installed[0]
+  return installed.find((terminal) => terminal.id === preferredId) ?? installed[0]
+}
+
+function escapeAppleScriptString(input: string): string {
+  return input.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
+}
+
+function quoteForShell(input: string): string {
+  return `'${input.replace(/'/g, `'\\''`)}'`
+}
+
+function buildClaudeInvocation(sessionId: string | null): string {
+  return sessionId ? `claude --resume ${quoteForShell(sessionId)}` : 'claude'
+}
+
+function buildClaudeShellCommand(projectPath: string, sessionId: string | null): string {
+  return `cd -- ${quoteForShell(projectPath)} && ${buildClaudeInvocation(sessionId)}`
+}
+
+function runAppleScript(script: string): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    execFile('/usr/bin/osascript', ['-e', script], (err) => {
+      if (err) reject(err)
+      else resolvePromise()
+    })
+  })
+}
+
+async function launchTerminal(terminal: InstalledTerminal, sessionId: string | null, projectPath: string): Promise<void> {
+  const command = buildClaudeShellCommand(projectPath, sessionId)
+
+  if (terminal.id === 'terminal') {
+    await runAppleScript(`tell application id "com.apple.Terminal"
+  activate
+  do script "${escapeAppleScriptString(command)}"
+end tell`)
+    return
+  }
+
+  if (terminal.id === 'iterm') {
+    await runAppleScript(`tell application id "com.googlecode.iterm2"
+  activate
+  set newWindow to create window with default profile
+  tell current session of newWindow
+    write text "${escapeAppleScriptString(command)}"
+  end tell
+end tell`)
+    return
+  }
+
+  if (terminal.id === 'ghostty') {
+    await runAppleScript(`tell application id "com.mitchellh.ghostty"
+  activate
+  set surfaceConfig to new surface configuration
+  set initial working directory of surfaceConfig to "${escapeAppleScriptString(projectPath)}"
+  set initial input of surfaceConfig to "${escapeAppleScriptString(buildClaudeInvocation(sessionId))}" & return
+  new window with configuration surfaceConfig
+end tell`)
+    return
+  }
+
+  if (terminal.id === 'alacritty') {
+    const shellCommand = `${buildClaudeInvocation(sessionId)}; exec "\${SHELL:-/bin/zsh}" -l`
+    const child = spawn(terminal.execPath || 'alacritty', [
+      '--working-directory',
+      projectPath,
+      '-e',
+      '/bin/zsh',
+      '-lc',
+      shellCommand,
+    ], {
+      cwd: projectPath,
+      detached: true,
+      stdio: 'ignore',
+    })
+
+    child.unref()
+  }
+}
 
 ipcMain.handle(IPC.SEARCH_SESSIONS, async (_e, query: string) => {
   searchManager.ensureReady()
@@ -1700,42 +1857,37 @@ ipcMain.handle(IPC.GET_DIAGNOSTICS, () => {
   }
 })
 
-ipcMain.handle(IPC.OPEN_IN_TERMINAL, (_event, arg: string | null | { sessionId?: string | null; projectPath?: string }) => {
-  const { execFile } = require('child_process')
-  const claudeBin = 'claude'
+ipcMain.handle(IPC.LIST_INSTALLED_TERMINALS, () => {
+  return getInstalledTerminals().map(({ id, label }) => ({ id, label }))
+})
+
+ipcMain.handle(IPC.OPEN_IN_TERMINAL, async (_event, arg: string | null | { sessionId?: string | null; projectPath?: string; terminalId?: PreferredTerminalId | TerminalId | null }) => {
 
   // Support both old (string) and new ({ sessionId, projectPath }) calling convention
   let sessionId: string | null = null
   let projectPath: string = process.cwd()
+  let terminalId: PreferredTerminalId | TerminalId | null = null
   if (typeof arg === 'string') {
     sessionId = arg
   } else if (arg && typeof arg === 'object') {
     sessionId = arg.sessionId ?? null
     projectPath = arg.projectPath && arg.projectPath !== '~' ? arg.projectPath : process.cwd()
+    terminalId = arg.terminalId ?? null
   }
 
-  // Escape for AppleScript: double quotes → backslash-escaped, backslashes doubled
-  const projectDir = projectPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  let cmd: string
-  if (sessionId) {
-    cmd = `cd \\"${projectDir}\\" && ${claudeBin} --resume ${sessionId}`
-  } else {
-    cmd = `cd \\"${projectDir}\\" && ${claudeBin}`
+  const terminal = pickInstalledTerminal(terminalId)
+  if (!terminal) {
+    log('Failed to open terminal: no supported terminal app found')
+    return false
   }
-
-  const script = `tell application "Terminal"
-  activate
-  do script "${cmd}"
-end tell`
 
   try {
-    execFile('/usr/bin/osascript', ['-e', script], (err: Error | null) => {
-      if (err) log(`Failed to open terminal: ${err.message}`)
-      else log(`Opened terminal with: ${cmd}`)
-    })
+    await launchTerminal(terminal, sessionId, projectPath)
+    log(`Opened terminal with ${terminal.label}: ${buildClaudeShellCommand(projectPath, sessionId)}`)
     return true
   } catch (err: unknown) {
-    log(`Failed to open terminal: ${err}`)
+    const message = err instanceof Error ? err.message : String(err)
+    log(`Failed to open terminal (${terminal.label}): ${message}`)
     return false
   }
 })

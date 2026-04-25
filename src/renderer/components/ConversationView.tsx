@@ -4,6 +4,7 @@ import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import rehypeKatex from 'rehype-katex'
+import remarkBreaks from 'remark-breaks'
 import {
   FileText, PencilSimple, FileArrowUp, Terminal, MagnifyingGlass, Globe,
   Robot, Question, Wrench, FolderOpen, Copy, Check, CaretRight, CaretDown,
@@ -25,6 +26,7 @@ import type { Message, Attachment } from '../../shared/types'
 const INITIAL_RENDER_CAP = 100
 const PAGE_SIZE = 100
 const REMARK_PLUGINS = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]] as any // Hoisted — prevents re-parse on every render
+const REMARK_PLUGINS_USER = [remarkGfm, [remarkMath, { singleDollarTextMath: false }], remarkBreaks] as any // User messages: also convert single newlines to <br>
 const REHYPE_PLUGINS = [rehypeKatex]
 
 // Minimal link override for Markdown surfaces without full markdownComponents:
@@ -535,8 +537,8 @@ function MessageAttachments({ attachments }: { attachments: Attachment[] }) {
  *  Matches '@' preceded by whitespace or at start, followed by path-like chars. */
 const FILE_TAG_RE = /(^|[\s])@([a-zA-Z0-9/\-_.]+)/g
 
-/** Render user message text, replacing @path tokens with inline file chips. */
-function renderUserContent(text: string, colors: ReturnType<typeof useColors>): React.ReactNode {
+/** Replace @path tokens with inline file-chip spans inside a plain string. */
+function replaceFileChips(text: string, colors: ReturnType<typeof useColors>): React.ReactNode {
   const parts: React.ReactNode[] = []
   let lastIndex = 0
   let match: RegExpExecArray | null
@@ -578,7 +580,7 @@ function renderUserContent(text: string, colors: ReturnType<typeof useColors>): 
     lastIndex = matchStart + fullMatch.length
   }
 
-  // If no matches found, return plain text
+  // If no matches found, return the original string
   if (parts.length === 0) return text
 
   // Push remaining text after last match
@@ -587,6 +589,14 @@ function renderUserContent(text: string, colors: ReturnType<typeof useColors>): 
   }
 
   return <>{parts}</>
+}
+
+/** Walk React children from a markdown element and replace @path text with file chips. */
+function processFileChips(children: React.ReactNode, colors: ReturnType<typeof useColors>): React.ReactNode {
+  return React.Children.map(children, (child) => {
+    if (typeof child === 'string') return replaceFileChips(child, colors)
+    return child
+  })
 }
 
 // ─── User Message ───
@@ -604,9 +614,30 @@ function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: b
   // Strip attachment path prefixes from the displayed text
   const displayText = hasAttachments ? stripAttachmentPrefixes(message.content) : message.content
 
+  // Markdown component overrides for user bubble context
+  const userMarkdownComponents = useMemo(() => ({
+    table: ({ children }: any) => <TableScrollWrapper>{children}</TableScrollWrapper>,
+    a: ({ href, children }: any) => (
+      <button
+        type="button"
+        className="underline decoration-dotted underline-offset-2 cursor-pointer"
+        style={{ color: colors.accent }}
+        onClick={() => { if (href) window.clui.openExternal(String(href)) }}
+      >
+        {children}
+      </button>
+    ),
+    img: ({ src, alt }: any) => <ImageCard src={src} alt={alt} colors={colors} />,
+    // Process @path file chips inside text-containing markdown elements
+    p: ({ children }: any) => <p>{processFileChips(children, colors)}</p>,
+    li: ({ children, ...rest }: any) => <li {...rest}>{processFileChips(children, colors)}</li>,
+    td: ({ children, ...rest }: any) => <td {...rest}>{processFileChips(children, colors)}</td>,
+    th: ({ children, ...rest }: any) => <th {...rest}>{processFileChips(children, colors)}</th>,
+  }), [colors])
+
   const content = (
     <div
-      className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%]"
+      className="text-[13px] leading-[1.5] px-3 py-1.5 max-w-[85%] prose-cloud-user"
       style={{
         background: colors.userBubble,
         color: colors.userBubbleText,
@@ -618,7 +649,9 @@ function UserMessage({ message, skipMotion }: { message: Message; skipMotion?: b
       {hasAttachments && (
         <MessageAttachments attachments={attachments} />
       )}
-      {renderUserContent(displayText, colors)}
+      <Markdown remarkPlugins={REMARK_PLUGINS_USER} rehypePlugins={REHYPE_PLUGINS} components={userMarkdownComponents}>
+        {displayText}
+      </Markdown>
     </div>
   )
 
@@ -659,6 +692,7 @@ function QueuedMessage({ content }: { content: string }) {
           border: `1px dashed ${colors.userBubbleBorder}`,
           borderRadius: '14px 14px 4px 14px',
           opacity: 0.6,
+          whiteSpace: 'pre-wrap',
         }}
       >
         {content}
@@ -1195,9 +1229,25 @@ const CONTEXT_PREFIX = '__CONTEXT_DATA__'
 const CONTEXT_LOADING = '__CONTEXT_LOADING__'
 const COST_PREFIX = '__COST_DATA__'
 const TODO_PREFIX = '__TODO_DATA__'
+const COMPACTION_PREFIX = '__COMPACTION_DATA__'
 
 function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
+
+  // Compaction card
+  const isCompaction = message.content.startsWith(COMPACTION_PREFIX)
+  if (isCompaction) {
+    try {
+      const parsed = JSON.parse(message.content.slice(COMPACTION_PREFIX.length))
+      const inner = <CompactionCard data={parsed} colors={colors} />
+      if (skipMotion) return <div className="py-1">{inner}</div>
+      return (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="py-1">
+          {inner}
+        </motion.div>
+      )
+    } catch {}
+  }
 
   // Todo card
   const isTodo = message.content.startsWith(TODO_PREFIX)
@@ -1321,6 +1371,73 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
 }
 
 // ─── Todo Card ───
+
+function CompactionCard({
+  data,
+  colors,
+}: {
+  data: {
+    state?: 'running' | 'completed' | 'failed'
+    message?: string
+    summary?: string
+    trigger?: string
+    compactedMessages?: number
+  }
+  colors: ReturnType<typeof useColors>
+}) {
+  const state = data.state || 'completed'
+  const isRunning = state === 'running'
+  const isFailed = state === 'failed'
+
+  const title = isRunning
+    ? 'Compacting conversation'
+    : isFailed
+      ? 'Compaction interrupted'
+      : 'Conversation compacted'
+
+  const detail = data.summary || data.message || title
+  const metaParts = [
+    data.trigger ? `trigger: ${data.trigger}` : null,
+    typeof data.compactedMessages === 'number' ? `${data.compactedMessages} message${data.compactedMessages === 1 ? '' : 's'}` : null,
+  ].filter(Boolean)
+
+  const icon = isRunning
+    ? <SpinnerGap size={12} className="animate-spin" style={{ color: colors.statusRunning }} />
+    : isFailed
+      ? <Archive size={12} style={{ color: colors.statusError }} />
+      : <Archive size={12} weight="fill" style={{ color: colors.accent }} />
+
+  return (
+    <div
+      className="inline-flex flex-col gap-1 px-3 py-2 rounded-xl max-w-full"
+      style={{
+        background: isFailed ? colors.statusErrorBg : colors.surfaceHover,
+        border: `1px solid ${isFailed ? colors.statusErrorBg : colors.toolBorder}`,
+      }}
+    >
+      <div className="flex items-center gap-2">
+        {icon}
+        <span
+          className="text-[11px] font-medium"
+          style={{ color: isFailed ? colors.statusError : colors.textSecondary }}
+        >
+          {title}
+        </span>
+      </div>
+      <div
+        className="text-[11px] leading-[1.5] whitespace-pre-wrap"
+        style={{ color: isFailed ? colors.statusError : colors.textTertiary }}
+      >
+        {detail}
+      </div>
+      {metaParts.length > 0 && (
+        <div className="text-[10px]" style={{ color: colors.textMuted }}>
+          {metaParts.join(' · ')}
+        </div>
+      )}
+    </div>
+  )
+}
 
 interface TodoTaskDisplay {
   id: string

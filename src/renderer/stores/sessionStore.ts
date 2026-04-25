@@ -147,6 +147,17 @@ async function playNotificationIfHidden(): Promise<void> {
 // ─── Todo/Task helpers ───
 
 const TODO_PREFIX = '__TODO_DATA__'
+const COMPACTION_PREFIX = '__COMPACTION_DATA__'
+
+type CompactionNoticeState = 'running' | 'completed' | 'failed'
+
+interface CompactionNoticePayload {
+  state: CompactionNoticeState
+  message: string
+  summary?: string
+  trigger?: string
+  compactedMessages?: number
+}
 
 function tryParseJson(s?: string): Record<string, unknown> | null {
   if (!s) return null
@@ -180,6 +191,41 @@ function buildTodoContent(todos: Record<string, TodoTask>): string {
   return TODO_PREFIX + JSON.stringify(Object.values(todos))
 }
 
+function buildCompactionContent(payload: CompactionNoticePayload): string {
+  return COMPACTION_PREFIX + JSON.stringify(payload)
+}
+
+function upsertCompactionNotice(tab: TabState, payload: CompactionNoticePayload): void {
+  const content = buildCompactionContent(payload)
+
+  if (tab.compactionMessageId) {
+    tab.messages = tab.messages.map((m) => (
+      m.id === tab.compactionMessageId
+        ? { ...m, content, timestamp: Date.now() }
+        : m
+    ))
+    return
+  }
+
+  const msg: Message = {
+    id: nextMsgId(),
+    role: 'system',
+    content,
+    timestamp: Date.now(),
+  }
+  tab.messages = [...tab.messages, msg]
+  tab.compactionMessageId = msg.id
+}
+
+function finalizeCompactionNotice(tab: TabState, payload: Omit<CompactionNoticePayload, 'state'> & { state?: CompactionNoticeState }): void {
+  if (!tab.compactionMessageId && !payload.summary && !payload.message) return
+  upsertCompactionNotice(tab, {
+    ...payload,
+    state: payload.state || 'completed',
+  })
+  tab.compactionMessageId = null
+}
+
 function makeLocalTab(): TabState {
   return {
     id: crypto.randomUUID(),
@@ -205,6 +251,8 @@ function makeLocalTab(): TabState {
     additionalDirs: [],
     todos: {},
     todoMessageId: null,
+    isCompacting: false,
+    compactionMessageId: null,
   }
 }
 
@@ -617,7 +665,19 @@ export const useSessionStore = create<State>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === activeTabId
-          ? { ...t, messages: [], lastResult: null, currentActivity: '', permissionQueue: [], permissionDenied: null, queuedPrompts: [], todos: {}, todoMessageId: null }
+          ? {
+              ...t,
+              messages: [],
+              lastResult: null,
+              currentActivity: '',
+              permissionQueue: [],
+              permissionDenied: null,
+              queuedPrompts: [],
+              todos: {},
+              todoMessageId: null,
+              isCompacting: false,
+              compactionMessageId: null,
+            }
           : t
       ),
     }))
@@ -1010,25 +1070,52 @@ export const useSessionStore = create<State>((set, get) => ({
             // Don't change status/activity for warmup inits — they're invisible
             if (!event.isWarmup) {
               updated.status = 'running'
-              updated.currentActivity = 'Thinking...'
-              updated.todos = {}
-              updated.todoMessageId = null
-              // Move the first queued prompt into the timeline (it's now being processed)
-              if (updated.queuedPrompts.length > 0) {
-                const [nextQueued, ...rest] = updated.queuedPrompts
-                updated.queuedPrompts = rest
-                updated.messages = [
-                  ...updated.messages,
-                  {
-                    id: nextMsgId(),
-                    role: 'user' as const,
-                    content: nextQueued.prompt,
-                    timestamp: Date.now(),
-                    attachments: nextQueued.attachments,
-                  },
-                ]
+              if (updated.isCompacting) {
+                updated.currentActivity = updated.currentActivity || 'Compacting conversation...'
+              } else {
+                updated.currentActivity = 'Thinking...'
+                updated.todos = {}
+                updated.todoMessageId = null
+                // Move the first queued prompt into the timeline (it's now being processed)
+                if (updated.queuedPrompts.length > 0) {
+                  const [nextQueued, ...rest] = updated.queuedPrompts
+                  updated.queuedPrompts = rest
+                  updated.messages = [
+                    ...updated.messages,
+                    {
+                      id: nextMsgId(),
+                      role: 'user' as const,
+                      content: nextQueued.prompt,
+                      timestamp: Date.now(),
+                      attachments: nextQueued.attachments,
+                    },
+                  ]
+                }
               }
             }
+            break
+
+          case 'status_update': {
+            updated.currentActivity = event.message || 'Working...'
+            if (event.isCompaction) {
+              updated.isCompacting = true
+              upsertCompactionNotice(updated, {
+                state: 'running',
+                message: event.message || 'Compacting conversation...',
+              })
+            }
+            break
+          }
+
+          case 'compact_boundary':
+            updated.isCompacting = false
+            updated.currentActivity = updated.status === 'running' ? 'Thinking...' : updated.currentActivity
+            finalizeCompactionNotice(updated, {
+              message: 'Conversation compacted.',
+              summary: event.summary,
+              trigger: event.trigger,
+              compactedMessages: event.compactedMessages,
+            })
             break
 
           case 'text_chunk': {
@@ -1198,12 +1285,18 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.activeRequestId = null
             updated.currentActivity = ''
             updated.permissionQueue = []
+            updated.isCompacting = false
             updated.lastResult = {
               totalCostUsd: event.costUsd,
               durationMs: event.durationMs,
               numTurns: event.numTurns,
               usage: event.usage,
               sessionId: event.sessionId,
+            }
+            if (updated.compactionMessageId) {
+              finalizeCompactionNotice(updated, {
+                message: 'Conversation compacted.',
+              })
             }
             // ── Final text fallback ──
             // If neither text_chunks nor task_update text produced an assistant message,
@@ -1247,6 +1340,13 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.currentActivity = ''
             updated.permissionQueue = []
             updated.permissionDenied = null
+            updated.isCompacting = false
+            if (updated.compactionMessageId) {
+              finalizeCompactionNotice(updated, {
+                state: 'failed',
+                message: 'Compaction interrupted.',
+              })
+            }
             updated.messages = [
               ...updated.messages,
               { id: nextMsgId(), role: 'system', content: `Error: ${event.message}`, timestamp: Date.now() },
@@ -1259,6 +1359,13 @@ export const useSessionStore = create<State>((set, get) => ({
             updated.currentActivity = ''
             updated.permissionQueue = []
             updated.permissionDenied = null
+            updated.isCompacting = false
+            if (updated.compactionMessageId) {
+              finalizeCompactionNotice(updated, {
+                state: 'failed',
+                message: 'Compaction interrupted.',
+              })
+            }
             updated.messages = [
               ...updated.messages,
               {
@@ -1350,12 +1457,29 @@ export const useSessionStore = create<State>((set, get) => ({
     set((s) => ({
       tabs: s.tabs.map((t) =>
         t.id === tabId
-          ? {
-              ...t,
-              status: newStatus as TabStatus,
-              // Clear activity when transitioning to idle (e.g., after warmup init)
-              ...(newStatus === 'idle' ? { currentActivity: '', permissionQueue: [] as import('../../shared/types').PermissionRequest[], permissionDenied: null } : {}),
-            }
+          ? (() => {
+              const updated = {
+                ...t,
+                status: newStatus as TabStatus,
+                // Clear activity when transitioning to idle (e.g., after warmup init)
+                ...(newStatus === 'idle' ? { currentActivity: '', permissionQueue: [] as import('../../shared/types').PermissionRequest[], permissionDenied: null } : {}),
+              }
+
+              if ((newStatus === 'failed' || newStatus === 'dead') && updated.compactionMessageId) {
+                updated.isCompacting = false
+                finalizeCompactionNotice(updated, {
+                  state: 'failed',
+                  message: 'Compaction interrupted.',
+                })
+              } else if ((newStatus === 'completed' || newStatus === 'idle') && updated.compactionMessageId) {
+                updated.isCompacting = false
+                finalizeCompactionNotice(updated, {
+                  message: 'Conversation compacted.',
+                })
+              }
+
+              return updated
+            })()
           : t
       ),
     }))
@@ -1369,17 +1493,27 @@ export const useSessionStore = create<State>((set, get) => ({
         // Deduplicate: skip if the last message is already an error for this failure
         const lastMsg = t.messages[t.messages.length - 1]
         const alreadyHasError = lastMsg?.role === 'system' && lastMsg.content.startsWith('Error:')
+        const updated = { ...t }
+
+        if (updated.compactionMessageId) {
+          updated.isCompacting = false
+          finalizeCompactionNotice(updated, {
+            state: 'failed',
+            message: 'Compaction interrupted.',
+          })
+        }
 
         return {
-          ...t,
+          ...updated,
           status: 'failed' as TabStatus,
           activeRequestId: null,
           currentActivity: '',
+          isCompacting: false,
           permissionQueue: [],
           messages: alreadyHasError
-            ? t.messages
+            ? updated.messages
             : [
-                ...t.messages,
+                ...updated.messages,
                 {
                   id: nextMsgId(),
                   role: 'system' as const,

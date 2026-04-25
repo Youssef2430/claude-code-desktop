@@ -1,7 +1,14 @@
 // ─── Claude Code Stream Event Types (verified from v2.1.63) ───
 
-export interface InitEvent {
+export interface BaseSystemEvent {
   type: 'system'
+  subtype: string
+  session_id?: string
+  uuid: string
+  [key: string]: unknown
+}
+
+export interface InitEvent extends BaseSystemEvent {
   subtype: 'init'
   cwd: string
   session_id: string
@@ -15,6 +22,36 @@ export interface InitEvent {
   claude_code_version: string
   fast_mode_state: string
   uuid: string
+}
+
+export interface StatusEvent extends BaseSystemEvent {
+  subtype: 'status'
+  message?: string
+  status?: string
+  content?: string
+  data?: {
+    message?: string
+    status?: string
+    content?: string
+    [key: string]: unknown
+  }
+}
+
+export interface CompactBoundaryEvent extends BaseSystemEvent {
+  subtype: 'compact_boundary'
+  message?: string
+  summary?: string
+  content?: string
+  trigger?: string
+  compacted_messages?: number
+  data?: {
+    message?: string
+    summary?: string
+    content?: string
+    trigger?: string
+    compacted_messages?: number
+    [key: string]: unknown
+  }
 }
 
 export interface StreamEvent {
@@ -110,7 +147,7 @@ export interface PermissionEvent {
 }
 
 // Union of all possible top-level events
-export type ClaudeEvent = InitEvent | StreamEvent | AssistantEvent | RateLimitEvent | ResultEvent | PermissionEvent | UnknownEvent
+export type ClaudeEvent = InitEvent | StatusEvent | CompactBoundaryEvent | StreamEvent | AssistantEvent | RateLimitEvent | ResultEvent | PermissionEvent | UnknownEvent
 
 export interface UnknownEvent {
   type: string
@@ -174,6 +211,10 @@ export interface TabState {
   todos: Record<string, TodoTask>
   /** Message ID of the injected TodoCard system message, updated in-place */
   todoMessageId: string | null
+  /** True while Claude is compacting the conversation for the current run */
+  isCompacting: boolean
+  /** Message ID of the live compaction notice, updated in-place */
+  compactionMessageId: string | null
 }
 
 export interface Message {
@@ -198,6 +239,16 @@ export interface RunResult {
   sessionId: string
 }
 
+// ─── Terminal Integration ───
+
+export type TerminalId = 'terminal' | 'iterm' | 'ghostty' | 'alacritty'
+export type PreferredTerminalId = 'auto' | TerminalId
+
+export interface TerminalInstallation {
+  id: TerminalId
+  label: string
+}
+
 // ─── Todo/Task State ───
 
 export interface TodoTask {
@@ -213,6 +264,8 @@ export interface TodoTask {
 
 export type NormalizedEvent =
   | { type: 'session_init'; sessionId: string; tools: string[]; model: string; mcpServers: Array<{ name: string; status: string }>; skills: string[]; version: string; isWarmup?: boolean }
+  | { type: 'status_update'; message: string; sessionId?: string | null; status?: string; isCompaction?: boolean }
+  | { type: 'compact_boundary'; sessionId?: string | null; summary?: string; trigger?: string; compactedMessages?: number }
   | { type: 'text_chunk'; text: string; parentToolUseId?: string | null }
   | { type: 'tool_call'; toolName: string; toolId: string; index: number; parentToolUseId?: string | null }
   | { type: 'tool_call_update'; toolId: string; partialInput: string; parentToolUseId?: string | null }
@@ -376,6 +429,7 @@ export const IPC = {
   SELECT_DIRECTORY: 'clui:select-directory',
   OPEN_EXTERNAL: 'clui:open-external',
   OPEN_IN_TERMINAL: 'clui:open-in-terminal',
+  LIST_INSTALLED_TERMINALS: 'clui:list-installed-terminals',
   ATTACH_FILES: 'clui:attach-files',
   TAKE_SCREENSHOT: 'clui:take-screenshot',
   TRANSCRIBE_AUDIO: 'clui:transcribe-audio',
