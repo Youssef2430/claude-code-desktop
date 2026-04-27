@@ -75,6 +75,7 @@ function extractStatusText(event: StatusEvent | CompactBoundaryEvent): string {
     ? (
         typeof event.data.message === 'string' ? event.data.message
           : typeof event.data.status === 'string' ? event.data.status
+            : typeof event.data.summary === 'string' ? event.data.summary
             : typeof event.data.content === 'string' ? event.data.content
               : ''
       )
@@ -82,14 +83,29 @@ function extractStatusText(event: StatusEvent | CompactBoundaryEvent): string {
 
   if (typeof event.message === 'string' && event.message.trim()) return event.message
   if (typeof event.status === 'string' && event.status.trim()) return event.status
+  if ('summary' in event && typeof event.summary === 'string' && event.summary.trim()) return event.summary
   if (typeof event.content === 'string' && event.content.trim()) return event.content
   if (fromData.trim()) return fromData
 
   return ''
 }
 
+function extractCompactResult(event: StatusEvent): string | undefined {
+  if (typeof event.compact_result === 'string' && event.compact_result.trim()) {
+    return event.compact_result.trim().toLowerCase()
+  }
+  if (typeof event.data?.compact_result === 'string' && event.data.compact_result.trim()) {
+    return event.data.compact_result.trim().toLowerCase()
+  }
+  return undefined
+}
+
 function looksLikeCompaction(text: string, event: StatusEvent | CompactBoundaryEvent): boolean {
   if (event.subtype === 'compact_boundary') return true
+
+  if ('compact_result' in event && typeof extractCompactResult(event) === 'string') {
+    return true
+  }
 
   const haystack = [
     text,
@@ -104,7 +120,27 @@ function looksLikeCompaction(text: string, event: StatusEvent | CompactBoundaryE
 }
 
 function normalizeStatus(event: StatusEvent): NormalizedEvent[] {
-  const message = extractStatusText(event) || 'Working...'
+  const compactResult = extractCompactResult(event)
+  let message = extractStatusText(event)
+
+  if (!message && compactResult === 'success') {
+    // compact_boundary carries the authoritative completion metadata.
+    // Ignore the intermediary success status so the UI does not regress to
+    // a generic "Working..." state between compaction start and completion.
+    return []
+  }
+
+  if (!message && compactResult) {
+    message = compactResult === 'success'
+      ? 'Conversation compacted.'
+      : 'Compaction interrupted.'
+  }
+
+  if ((event.status || '').toLowerCase() === 'compacting' && message.toLowerCase() === 'compacting') {
+    message = 'Compacting conversation...'
+  }
+
+  message = message || 'Working...'
   return [{
     type: 'status_update',
     message,
@@ -116,10 +152,17 @@ function normalizeStatus(event: StatusEvent): NormalizedEvent[] {
 
 function normalizeCompactBoundary(event: CompactBoundaryEvent): NormalizedEvent[] {
   const summary = extractStatusText(event) || undefined
+  const compactMetadata = event.compact_metadata && typeof event.compact_metadata === 'object'
+    ? event.compact_metadata
+    : event.data?.compact_metadata && typeof event.data.compact_metadata === 'object'
+      ? event.data.compact_metadata
+      : undefined
   const trigger = typeof event.trigger === 'string'
     ? event.trigger
     : typeof event.data?.trigger === 'string'
       ? event.data.trigger
+      : typeof compactMetadata?.trigger === 'string'
+        ? compactMetadata.trigger
       : undefined
   const compactedMessages = typeof event.compacted_messages === 'number'
     ? event.compacted_messages

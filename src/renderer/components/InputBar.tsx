@@ -204,6 +204,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
   const addSystemMessage = useSessionStore((s) => s.addSystemMessage)
   const addAttachments = useSessionStore((s) => s.addAttachments)
   const removeAttachment = useSessionStore((s) => s.removeAttachment)
+  const clearAttachments = useSessionStore((s) => s.clearAttachments)
 
   const setPreferredModel = useSessionStore((s) => s.setPreferredModel)
   const staticInfo = useSessionStore((s) => s.staticInfo)
@@ -578,6 +579,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       case '/help': {
         const lines = [
           '/clear — Clear conversation history',
+          '/compact — Compact the current conversation',
           '/context — Show context window usage',
           '/cost — Show token usage and cost',
           '/model — Show model info & switch models',
@@ -598,6 +600,19 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
       requestAnimationFrame(() => textareaRef.current?.focus())
       return
     }
+    if (cmd.command === '/compact') {
+      clearAttachments()
+      setInput('')
+      setSlashFilter(null)
+      setMentionFilter(null)
+      setMentionStart(-1)
+      if (textareaRef.current) {
+        textareaRef.current.style.height = `${INPUT_MIN_HEIGHT}px`
+      }
+      sendMessage('/compact')
+      requestAnimationFrame(() => textareaRef.current?.focus())
+      return
+    }
     const isSkillCommand = !!tab?.sessionSkills?.includes(cmd.command.replace(/^\//, ''))
     if (isSkillCommand) {
       setInput(`${cmd.command} `)
@@ -608,7 +623,7 @@ export const InputBar = forwardRef<InputBarHandle>(function InputBar(_props, ref
     setInput('')
     setSlashFilter(null)
     executeCommand(cmd)
-  }, [executeCommand, tab?.sessionSkills])
+  }, [clearAttachments, executeCommand, sendMessage, tab?.sessionSkills])
 
   // ─── Send ───
   const handleSend = useCallback(() => {

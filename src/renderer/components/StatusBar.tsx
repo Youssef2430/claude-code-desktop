@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { motion } from 'framer-motion'
 import { Terminal, CaretDown, Check, FolderOpen, Plus, X, ShieldCheck } from '@phosphor-icons/react'
 import { useSessionStore, AVAILABLE_MODELS } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
-import { useColors } from '../theme'
-import { openInPreferredTerminal } from '../utils/terminal'
+import { useColors, useThemeStore } from '../theme'
+import type { PreferredTerminalId, TerminalInstallation } from '../../shared/types'
 
 /* ─── Model Picker (inline — tightly coupled to StatusBar) ─── */
 
@@ -249,6 +249,217 @@ function PermissionModePicker() {
   )
 }
 
+function TerminalLaunchControl({
+  sessionId,
+  projectPath,
+}: {
+  sessionId: string | null
+  projectPath: string
+}) {
+  const preferredTerminalId = useThemeStore((s) => s.preferredTerminalId)
+  const setPreferredTerminalId = useThemeStore((s) => s.setPreferredTerminalId)
+  const popoverLayer = usePopoverLayer()
+  const colors = useColors()
+
+  const [open, setOpen] = useState(false)
+  const [terminals, setTerminals] = useState<TerminalInstallation[]>([])
+  const [terminalsLoading, setTerminalsLoading] = useState(false)
+  const triggerRef = useRef<HTMLDivElement>(null)
+  const popoverRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ bottom: 0, right: 0 })
+
+  const refreshTerminals = useCallback(async () => {
+    setTerminalsLoading(true)
+    try {
+      const items = await window.clui.listInstalledTerminals()
+      setTerminals(items)
+    } catch {
+      setTerminals([])
+    } finally {
+      setTerminalsLoading(false)
+    }
+  }, [])
+
+  const updatePos = useCallback(() => {
+    if (!triggerRef.current) return
+    const rect = triggerRef.current.getBoundingClientRect()
+    setPos({
+      bottom: window.innerHeight - rect.top + 6,
+      right: Math.max(8, window.innerWidth - rect.right),
+    })
+  }, [])
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      const target = e.target as Node
+      if (triggerRef.current?.contains(target)) return
+      if (popoverRef.current?.contains(target)) return
+      setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  useEffect(() => {
+    if (!open) return
+    void refreshTerminals()
+
+    const onResize = () => updatePos()
+    window.addEventListener('resize', onResize)
+    return () => window.removeEventListener('resize', onResize)
+  }, [open, refreshTerminals, updatePos])
+
+  const selectedTerminal = preferredTerminalId === 'auto'
+    ? null
+    : terminals.find((terminal) => terminal.id === preferredTerminalId) ?? null
+  const selectedTerminalValue: PreferredTerminalId = preferredTerminalId !== 'auto' && !terminalsLoading && !selectedTerminal
+    ? 'auto'
+    : preferredTerminalId
+
+  const launchTerminal = (terminalId: PreferredTerminalId) => {
+    void window.clui.openInTerminal(sessionId, projectPath, terminalId)
+  }
+
+  const handleMenuToggle = () => {
+    if (!open) updatePos()
+    setOpen((isOpen) => !isOpen)
+  }
+
+  const handlePick = (terminalId: PreferredTerminalId) => {
+    setPreferredTerminalId(terminalId)
+    setOpen(false)
+    launchTerminal(terminalId)
+  }
+
+  const currentDescription = selectedTerminal
+    ? `Launches in ${selectedTerminal.label}`
+    : preferredTerminalId === 'auto'
+      ? 'Launches in your macOS default terminal app'
+      : 'Launches in your saved terminal app'
+
+  return (
+    <>
+      <div
+        ref={triggerRef}
+        className="flex items-center rounded-full overflow-hidden"
+        style={{
+          border: `1px solid ${colors.surfaceSecondary}`,
+          background: colors.surfacePrimary,
+        }}
+      >
+        <button
+          onClick={() => launchTerminal(preferredTerminalId)}
+          className="flex items-center gap-1 px-2.5 py-0.5 text-[11px] transition-colors"
+          style={{ color: colors.textSecondary }}
+          title={currentDescription}
+        >
+          Open in CLI
+          <Terminal size={11} />
+        </button>
+
+        <div style={{ width: 1, alignSelf: 'stretch', background: colors.containerBorder }} />
+
+        <button
+          onClick={handleMenuToggle}
+          className="px-1.5 py-0.5 transition-colors"
+          style={{ color: colors.textTertiary }}
+          title="Choose terminal app"
+          aria-haspopup="menu"
+          aria-expanded={open}
+        >
+          <CaretDown size={10} style={{ opacity: 0.8 }} />
+        </button>
+      </div>
+
+      {popoverLayer && open && createPortal(
+        <motion.div
+          ref={popoverRef}
+          data-clui-ui
+          initial={{ opacity: 0, y: 4 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, y: 4 }}
+          transition={{ duration: 0.12 }}
+          className="rounded-xl"
+          style={{
+            position: 'fixed',
+            bottom: pos.bottom,
+            right: pos.right,
+            width: 244,
+            pointerEvents: 'auto',
+            background: colors.popoverBg,
+            backdropFilter: 'blur(20px)',
+            WebkitBackdropFilter: 'blur(20px)',
+            boxShadow: colors.popoverShadow,
+            border: `1px solid ${colors.popoverBorder}`,
+          }}
+        >
+          <div className="p-1.5">
+            <div className="px-2.5 pt-1 pb-1.5">
+              <div className="text-[11px]" style={{ color: colors.textPrimary }}>
+                Open in CLI
+              </div>
+              <div className="text-[11px] leading-[1.4] mt-1" style={{ color: colors.textTertiary }}>
+                Pick an installed terminal to save it as the launcher. Automatic uses the macOS default handler.
+              </div>
+            </div>
+
+            <button
+              onClick={() => handlePick('auto')}
+              className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-[11px] text-left transition-colors"
+              style={{
+                color: selectedTerminalValue === 'auto' ? colors.textPrimary : colors.textSecondary,
+                fontWeight: selectedTerminalValue === 'auto' ? 600 : 400,
+              }}
+            >
+              <div className="min-w-0">
+                <div className="truncate">Automatic</div>
+                <div className="text-[11px] mt-0.5" style={{ color: colors.textTertiary }}>
+                  Use macOS default terminal app
+                </div>
+              </div>
+              {selectedTerminalValue === 'auto' && <Check size={12} style={{ color: colors.accent }} />}
+            </button>
+
+            <div className="mx-1 my-1" style={{ height: 1, background: colors.popoverBorder }} />
+
+            {terminalsLoading && (
+              <div className="px-2.5 py-2 text-[11px]" style={{ color: colors.textTertiary }}>
+                Detecting installed terminal apps…
+              </div>
+            )}
+
+            {!terminalsLoading && terminals.length === 0 && (
+              <div className="px-2.5 py-2 text-[11px] leading-[1.4]" style={{ color: colors.textTertiary }}>
+                No individual terminal apps were detected. Automatic still uses whatever macOS opens for terminal scripts.
+              </div>
+            )}
+
+            {!terminalsLoading && terminals.map((terminal) => {
+              const isSelected = terminal.id === selectedTerminalValue
+              return (
+                <button
+                  key={terminal.id}
+                  onClick={() => handlePick(terminal.id)}
+                  className="w-full flex items-center justify-between rounded-lg px-2.5 py-2 text-[11px] text-left transition-colors"
+                  style={{
+                    color: isSelected ? colors.textPrimary : colors.textSecondary,
+                    fontWeight: isSelected ? 600 : 400,
+                  }}
+                >
+                  <span className="truncate pr-2">{terminal.label}</span>
+                  {isSelected && <Check size={12} style={{ color: colors.accent }} />}
+                </button>
+              )
+            })}
+          </div>
+        </motion.div>,
+        popoverLayer,
+      )}
+    </>
+  )
+}
+
 /* ─── StatusBar ─── */
 
 /** Get a compact display path: basename for deep paths, ~ for home */
@@ -297,10 +508,6 @@ export function StatusBar() {
   const isRunning = tab.status === 'running' || tab.status === 'connecting'
   const isEmpty = tab.messages.length === 0
   const hasExtraDirs = tab.additionalDirs.length > 0
-
-  const handleOpenInTerminal = () => {
-    openInPreferredTerminal(tab.claudeSessionId, tab.workingDirectory)
-  }
 
   const handleDirClick = () => {
     if (isRunning) return
@@ -439,15 +646,7 @@ export function StatusBar() {
 
       {/* Right — Open in CLI */}
       <div className="flex items-center gap-1.5 flex-shrink-0">
-        <button
-          onClick={handleOpenInTerminal}
-          className="flex items-center gap-1 text-[11px] rounded-full px-2 py-0.5 transition-colors"
-          style={{ color: colors.textTertiary }}
-          title="Open this session in Terminal"
-        >
-          Open in CLI
-          <Terminal size={11} />
-        </button>
+        <TerminalLaunchControl sessionId={tab.claudeSessionId} projectPath={tab.workingDirectory} />
       </div>
     </div>
   )

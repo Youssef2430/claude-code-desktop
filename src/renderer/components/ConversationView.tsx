@@ -1230,9 +1230,25 @@ const CONTEXT_LOADING = '__CONTEXT_LOADING__'
 const COST_PREFIX = '__COST_DATA__'
 const TODO_PREFIX = '__TODO_DATA__'
 const COMPACTION_PREFIX = '__COMPACTION_DATA__'
+const LOCAL_COMMAND_PREFIX = '__LOCAL_COMMAND_DATA__'
 
 function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?: boolean }) {
   const colors = useColors()
+
+  // Local command replay card
+  const isLocalCommand = message.content.startsWith(LOCAL_COMMAND_PREFIX)
+  if (isLocalCommand) {
+    try {
+      const parsed = JSON.parse(message.content.slice(LOCAL_COMMAND_PREFIX.length))
+      const inner = <LocalCommandCard data={parsed} colors={colors} />
+      if (skipMotion) return <div className="py-1">{inner}</div>
+      return (
+        <motion.div initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.2 }} className="py-1">
+          {inner}
+        </motion.div>
+      )
+    } catch {}
+  }
 
   // Compaction card
   const isCompaction = message.content.startsWith(COMPACTION_PREFIX)
@@ -1372,6 +1388,56 @@ function SystemMessage({ message, skipMotion }: { message: Message; skipMotion?:
 
 // ─── Todo Card ───
 
+function LocalCommandCard({
+  data,
+  colors,
+}: {
+  data: {
+    commandName?: string
+    args?: string
+    output?: string
+  }
+  colors: ReturnType<typeof useColors>
+}) {
+  const commandLine = [data.commandName, data.args]
+    .map((part) => typeof part === 'string' ? part.trim() : '')
+    .filter(Boolean)
+    .join(' ')
+
+  return (
+    <div
+      className="inline-flex flex-col gap-1 px-3 py-2 rounded-xl max-w-full"
+      style={{
+        background: colors.surfaceHover,
+        border: `1px solid ${colors.toolBorder}`,
+      }}
+    >
+      <div className="flex items-center gap-2">
+        <Terminal size={12} style={{ color: colors.textSecondary }} />
+        <span className="text-[11px] font-medium" style={{ color: colors.textSecondary }}>
+          Local command
+        </span>
+      </div>
+      {commandLine && (
+        <div
+          className="text-[11px] leading-[1.5] font-mono whitespace-pre-wrap break-all"
+          style={{ color: colors.textPrimary }}
+        >
+          {commandLine}
+        </div>
+      )}
+      {data.output && (
+        <div
+          className="text-[11px] leading-[1.5] whitespace-pre-wrap"
+          style={{ color: colors.textTertiary }}
+        >
+          {data.output}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CompactionCard({
   data,
   colors,
@@ -1396,10 +1462,12 @@ function CompactionCard({
       : 'Conversation compacted'
 
   const detail = data.summary || data.message || title
-  const metaParts = [
-    data.trigger ? `trigger: ${data.trigger}` : null,
-    typeof data.compactedMessages === 'number' ? `${data.compactedMessages} message${data.compactedMessages === 1 ? '' : 's'}` : null,
-  ].filter(Boolean)
+  const triggerLabel = data.trigger
+    ? (data.trigger === 'auto' ? 'automatic' : data.trigger)
+    : null
+  const compactedMessagesLabel = typeof data.compactedMessages === 'number'
+    ? `${data.compactedMessages} message${data.compactedMessages === 1 ? '' : 's'}`
+    : null
 
   const icon = isRunning
     ? <SpinnerGap size={12} className="animate-spin" style={{ color: colors.statusRunning }} />
@@ -1430,9 +1498,25 @@ function CompactionCard({
       >
         {detail}
       </div>
-      {metaParts.length > 0 && (
-        <div className="text-[10px]" style={{ color: colors.textMuted }}>
-          {metaParts.join(' · ')}
+      {(triggerLabel || compactedMessagesLabel) && (
+        <div className="flex items-center gap-2 text-[10px]" style={{ color: colors.textMuted }}>
+          {triggerLabel && (
+            <span
+              className="inline-flex items-center gap-1 rounded-md px-1.5 py-0.5"
+              style={{
+                background: isFailed ? colors.statusErrorBg : colors.surfaceSecondary,
+                color: isFailed ? colors.statusError : colors.textSecondary,
+              }}
+              title={`Trigger: ${triggerLabel}`}
+              aria-label={`Trigger: ${triggerLabel}`}
+            >
+              <Lightning size={10} weight="fill" />
+              <span>{triggerLabel}</span>
+            </span>
+          )}
+          {compactedMessagesLabel && (
+            <span>{compactedMessagesLabel}</span>
+          )}
         </div>
       )}
     </div>

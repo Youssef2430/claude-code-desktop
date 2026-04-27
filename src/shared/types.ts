@@ -28,10 +28,12 @@ export interface StatusEvent extends BaseSystemEvent {
   subtype: 'status'
   message?: string
   status?: string
+  compact_result?: string
   content?: string
   data?: {
     message?: string
     status?: string
+    compact_result?: string
     content?: string
     [key: string]: unknown
   }
@@ -44,12 +46,26 @@ export interface CompactBoundaryEvent extends BaseSystemEvent {
   content?: string
   trigger?: string
   compacted_messages?: number
+  compact_metadata?: {
+    trigger?: string
+    pre_tokens?: number
+    post_tokens?: number
+    duration_ms?: number
+    [key: string]: unknown
+  }
   data?: {
     message?: string
     summary?: string
     content?: string
     trigger?: string
     compacted_messages?: number
+    compact_metadata?: {
+      trigger?: string
+      pre_tokens?: number
+      post_tokens?: number
+      duration_ms?: number
+      [key: string]: unknown
+    }
     [key: string]: unknown
   }
 }
@@ -146,8 +162,22 @@ export interface PermissionEvent {
   uuid: string
 }
 
+export interface UserEvent {
+  type: 'user'
+  message?: {
+    role?: 'user'
+    content?: string | Array<{ type?: string; text?: string; [key: string]: unknown }>
+  }
+  session_id?: string
+  parent_tool_use_id?: string | null
+  timestamp?: string
+  isReplay?: boolean
+  isSynthetic?: boolean
+  uuid?: string
+}
+
 // Union of all possible top-level events
-export type ClaudeEvent = InitEvent | StatusEvent | CompactBoundaryEvent | StreamEvent | AssistantEvent | RateLimitEvent | ResultEvent | PermissionEvent | UnknownEvent
+export type ClaudeEvent = InitEvent | StatusEvent | CompactBoundaryEvent | StreamEvent | AssistantEvent | RateLimitEvent | ResultEvent | PermissionEvent | UserEvent | UnknownEvent
 
 export interface UnknownEvent {
   type: string
@@ -241,7 +271,7 @@ export interface RunResult {
 
 // ─── Terminal Integration ───
 
-export type TerminalId = 'terminal' | 'iterm' | 'ghostty' | 'alacritty'
+export type TerminalId = string
 export type PreferredTerminalId = 'auto' | TerminalId
 
 export interface TerminalInstallation {

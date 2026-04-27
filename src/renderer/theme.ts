@@ -281,10 +281,8 @@ export type ColorPalette = { [K in keyof typeof darkColors]: string }
 
 export type ThemeMode = 'system' | 'light' | 'dark'
 
-const TERMINAL_IDS: TerminalId[] = ['terminal', 'iterm', 'ghostty', 'alacritty']
-
 function isTerminalId(value: unknown): value is TerminalId {
-  return typeof value === 'string' && TERMINAL_IDS.includes(value as TerminalId)
+  return typeof value === 'string' && value.trim().length > 0
 }
 
 interface ThemeState {

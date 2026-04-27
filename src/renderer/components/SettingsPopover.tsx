@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { createPortal } from 'react-dom'
 import { motion } from 'framer-motion'
-import { DotsThree, Bell, ArrowsOutSimple, Moon, ArrowsClockwise, Terminal } from '@phosphor-icons/react'
+import { DotsThree, Bell, ArrowsOutSimple, Moon, ArrowsClockwise } from '@phosphor-icons/react'
 import { useThemeStore } from '../theme'
 import { useSessionStore } from '../stores/sessionStore'
 import { usePopoverLayer } from './PopoverLayer'
 import { useColors } from '../theme'
-import type { PreferredTerminalId, TerminalInstallation } from '../../shared/types'
 
 function RowToggle({
   checked,
@@ -51,16 +50,12 @@ export function SettingsPopover() {
   const setThemeMode = useThemeStore((s) => s.setThemeMode)
   const expandedUI = useThemeStore((s) => s.expandedUI)
   const setExpandedUI = useThemeStore((s) => s.setExpandedUI)
-  const preferredTerminalId = useThemeStore((s) => s.preferredTerminalId)
-  const setPreferredTerminalId = useThemeStore((s) => s.setPreferredTerminalId)
   const updateReady = useThemeStore((s) => s.updateReady)
   const updateVersion = useThemeStore((s) => s.updateVersion)
   const isExpanded = useSessionStore((s) => s.isExpanded)
   const popoverLayer = usePopoverLayer()
   const colors = useColors()
   const [checking, setChecking] = useState(false)
-  const [terminals, setTerminals] = useState<TerminalInstallation[]>([])
-  const [terminalsLoading, setTerminalsLoading] = useState(false)
 
   const [open, setOpen] = useState(false)
   const triggerRef = useRef<HTMLButtonElement>(null)
@@ -113,27 +108,6 @@ export function SettingsPopover() {
     return () => window.removeEventListener('resize', onResize)
   }, [open, updatePos])
 
-  useEffect(() => {
-    if (!open) return
-    let cancelled = false
-
-    setTerminalsLoading(true)
-    window.clui.listInstalledTerminals()
-      .then((items) => {
-        if (!cancelled) setTerminals(items)
-      })
-      .catch(() => {
-        if (!cancelled) setTerminals([])
-      })
-      .finally(() => {
-        if (!cancelled) setTerminalsLoading(false)
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [open])
-
   // Keep panel tracking the trigger continuously while open so it follows
   // width/position animations of the top bar without feeling "stuck in space."
   useEffect(() => {
@@ -153,11 +127,6 @@ export function SettingsPopover() {
     if (!open) updatePos()
     setOpen((o) => !o)
   }
-
-  const autoTerminal = terminals[0]
-  const selectedTerminalValue: PreferredTerminalId = preferredTerminalId === 'auto' || terminals.some((terminal) => terminal.id === preferredTerminalId)
-    ? preferredTerminalId
-    : 'auto'
 
   return (
     <>
@@ -253,48 +222,6 @@ export function SettingsPopover() {
                   colors={colors}
                   label="Toggle dark theme"
                 />
-              </div>
-            </div>
-
-            <div style={{ height: 1, background: colors.popoverBorder }} />
-
-            {/* Preferred terminal */}
-            <div>
-              <div className="flex items-start gap-2 min-w-0">
-                <Terminal size={14} style={{ color: colors.textTertiary, marginTop: 1 }} />
-                <div className="min-w-0 flex-1">
-                  <div className="text-[12px] font-medium" style={{ color: colors.textPrimary }}>
-                    Open in CLI
-                  </div>
-                  <div className="text-[10px] leading-[1.45] mt-1" style={{ color: colors.textTertiary }}>
-                    {terminalsLoading
-                      ? 'Detecting installed terminals…'
-                      : terminals.length > 0
-                        ? `Launches in ${selectedTerminalValue === 'auto' ? autoTerminal?.label || 'the first available terminal' : terminals.find((terminal) => terminal.id === selectedTerminalValue)?.label || 'your selected terminal'}.`
-                        : 'No supported terminal app detected.'}
-                  </div>
-                  <select
-                    value={selectedTerminalValue}
-                    disabled={terminalsLoading || terminals.length === 0}
-                    onChange={(e) => setPreferredTerminalId(e.target.value as PreferredTerminalId)}
-                    className="mt-2 w-full rounded-lg px-2.5 py-2 text-[11px] outline-none"
-                    style={{
-                      background: colors.surfacePrimary,
-                      color: colors.textPrimary,
-                      border: `1px solid ${colors.containerBorder}`,
-                      opacity: terminalsLoading || terminals.length === 0 ? 0.65 : 1,
-                    }}
-                  >
-                    <option value="auto">
-                      {autoTerminal ? `Automatic (${autoTerminal.label})` : 'Automatic'}
-                    </option>
-                    {terminals.map((terminal) => (
-                      <option key={terminal.id} value={terminal.id}>
-                        {terminal.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
               </div>
             </div>
 
