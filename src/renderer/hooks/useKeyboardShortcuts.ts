@@ -1,5 +1,6 @@
 import { useEffect, useCallback } from 'react'
 import { useSessionStore } from '../stores/sessionStore'
+import { openInPreferredTerminal } from '../utils/terminal'
 
 /**
  * Centralized keyboard shortcut handler for Clui.
@@ -168,7 +169,7 @@ export function useKeyboardShortcuts({
         const state = useSessionStore.getState()
         const tab = state.tabs.find((t) => t.id === state.activeTabId)
         if (tab) {
-          window.clui.openInTerminal(tab.claudeSessionId, tab.workingDirectory)
+          openInPreferredTerminal(tab.claudeSessionId, tab.workingDirectory)
         }
         return
       }

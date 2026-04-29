@@ -1,9 +1,10 @@
 import { app, BrowserWindow, ipcMain, dialog, screen, globalShortcut, Tray, Menu, nativeImage, nativeTheme, shell, systemPreferences, protocol, net } from 'electron'
-import { join, resolve, normalize } from 'path'
-import { existsSync, readdirSync, statSync, createReadStream } from 'fs'
+import { execFile, spawn } from 'child_process'
+import { basename, join, resolve, normalize } from 'path'
+import { existsSync, readdirSync, statSync, createReadStream, mkdirSync, writeFileSync, chmodSync } from 'fs'
 import { readdir } from 'fs/promises'
 import { createInterface } from 'readline'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { ControlPlane } from './claude/control-plane'
 import { ensureSkills, type SkillStatus } from './skills/installer'
 import { fetchCatalog, listInstalled, installPlugin, uninstallPlugin } from './marketplace/catalog'
@@ -12,7 +13,7 @@ import { getCliEnv } from './cli-env'
 import { autoUpdater } from 'electron-updater'
 import { SearchManager } from './search/search-manager'
 import { IPC, OVERLAY_BAR_WIDTH, OVERLAY_PILL_HEIGHT, OVERLAY_PILL_BOTTOM_MARGIN } from '../shared/types'
-import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions } from '../shared/types'
+import type { RunOptions, NormalizedEvent, EnrichedError, BtwOptions, PreferredTerminalId, TerminalId, TerminalInstallation } from '../shared/types'
 
 const DEBUG_MODE = process.env.CLUI_DEBUG === '1'
 const SPACES_DEBUG = DEBUG_MODE || process.env.CLUI_SPACES_DEBUG === '1'
@@ -160,6 +161,284 @@ function broadcast(channel: string, ...args: unknown[]): void {
 const searchManager = new SearchManager((status) => {
   broadcast(IPC.SEARCH_INDEX_STATUS, status)
 })
+
+// ─── Terminal detection / launch ───
+
+type PlistValue = string | number | boolean | null | PlistObject | PlistValue[]
+
+interface PlistObject {
+  [key: string]: PlistValue
+}
+
+type TerminalLaunchStrategy = 'open-script' | 'spawn-alacritty'
+
+interface InstalledTerminal extends TerminalInstallation {
+  appPath: string
+  execPath?: string
+  launchStrategy: TerminalLaunchStrategy
+}
+
+const TERMINAL_SCRIPT_EXTENSIONS = new Set(['command', 'tool'])
+const TERMINAL_SCRIPT_CONTENT_TYPES = new Set(['com.apple.terminal.shell-script'])
+const TERMINAL_DISCOVERY_CACHE_MS = 15_000
+
+function uniquePaths(paths: string[]): string[] {
+  return [...new Set(paths)]
+}
+
+function stripAppExtension(name: string): string {
+  return name.endsWith('.app') ? name.slice(0, -4) : name
+}
+
+function getAppLabel(info: PlistObject, appPath: string): string {
+  const displayName = typeof info.CFBundleDisplayName === 'string' && info.CFBundleDisplayName.trim().length > 0
+    ? info.CFBundleDisplayName
+    : typeof info.CFBundleName === 'string' && info.CFBundleName.trim().length > 0
+      ? info.CFBundleName
+      : stripAppExtension(basename(appPath))
+
+  return displayName.trim()
+}
+
+function getAppId(info: PlistObject, appPath: string): TerminalId {
+  if (typeof info.CFBundleIdentifier === 'string' && info.CFBundleIdentifier.trim().length > 0) {
+    return info.CFBundleIdentifier
+  }
+
+  return `app:${stripAppExtension(basename(appPath)).toLowerCase().replace(/[^a-z0-9]+/g, '-')}`
+}
+
+async function discoverAppBundles(rootDir: string, depth = 1): Promise<string[]> {
+  if (!existsSync(rootDir)) return []
+
+  const entries = await readdir(rootDir, { withFileTypes: true }).catch(() => [])
+  const bundles = await Promise.all(entries.map(async (entry) => {
+    if (!entry.isDirectory()) return []
+
+    const fullPath = join(rootDir, entry.name)
+    if (entry.name.endsWith('.app')) {
+      return [fullPath]
+    }
+
+    if (depth > 0) {
+      return discoverAppBundles(fullPath, depth - 1)
+    }
+
+    return []
+  }))
+
+  return bundles.flat()
+}
+
+function readBundleInfo(appPath: string): Promise<PlistObject | null> {
+  const plistPath = join(appPath, 'Contents', 'Info.plist')
+  if (!existsSync(plistPath)) return Promise.resolve(null)
+
+  return new Promise((resolve) => {
+    execFile('/usr/bin/plutil', ['-convert', 'json', '-o', '-', plistPath], {
+      encoding: 'utf8',
+      maxBuffer: 2 * 1024 * 1024,
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }, (err, stdout) => {
+      if (err) {
+        resolve(null)
+        return
+      }
+
+      try {
+        const parsed = JSON.parse(String(stdout))
+        resolve(parsed && typeof parsed === 'object' ? parsed as PlistObject : null)
+      } catch {
+        resolve(null)
+      }
+    })
+  })
+}
+
+function getDocumentTypes(info: PlistObject): PlistObject[] {
+  if (!Array.isArray(info.CFBundleDocumentTypes)) return []
+  return info.CFBundleDocumentTypes.filter((value): value is PlistObject => value != null && typeof value === 'object' && !Array.isArray(value))
+}
+
+function getStringArray(value: PlistValue | undefined): string[] {
+  if (!Array.isArray(value)) return []
+  return value.filter((item): item is string => typeof item === 'string')
+}
+
+function supportsShellScriptDocuments(info: PlistObject): boolean {
+  return getDocumentTypes(info).some((documentType) => {
+    const extensions = getStringArray(documentType.CFBundleTypeExtensions).map((extension) => extension.toLowerCase())
+    if (extensions.some((extension) => TERMINAL_SCRIPT_EXTENSIONS.has(extension))) return true
+
+    const contentTypes = getStringArray(documentType.LSItemContentTypes)
+    return contentTypes.some((contentType) => TERMINAL_SCRIPT_CONTENT_TYPES.has(contentType))
+  })
+}
+
+function getExecutablePath(info: PlistObject, appPath: string): string | null {
+  if (typeof info.CFBundleExecutable !== 'string' || info.CFBundleExecutable.trim().length === 0) return null
+
+  const execPath = join(appPath, 'Contents', 'MacOS', info.CFBundleExecutable)
+  return existsSync(execPath) ? execPath : null
+}
+
+function detectLaunchStrategy(info: PlistObject, execPath: string | null): TerminalLaunchStrategy | null {
+  if (supportsShellScriptDocuments(info)) return 'open-script'
+
+  // Some terminal apps do not register shell-script handlers but can still be
+  // launched directly with an executable command interface.
+  if (execPath && (info.CFBundleIdentifier === 'org.alacritty' || basename(execPath).toLowerCase() === 'alacritty')) {
+    return 'spawn-alacritty'
+  }
+
+  return null
+}
+
+async function buildInstalledTerminal(appPath: string): Promise<InstalledTerminal | null> {
+  const info = await readBundleInfo(appPath)
+  if (!info) return null
+
+  const execPath = getExecutablePath(info, appPath)
+  const launchStrategy = detectLaunchStrategy(info, execPath)
+  if (!launchStrategy) return null
+
+  return {
+    id: getAppId(info, appPath),
+    label: getAppLabel(info, appPath),
+    appPath,
+    ...(execPath ? { execPath } : {}),
+    launchStrategy,
+  }
+}
+
+let installedTerminalCache: { scannedAt: number; terminals: InstalledTerminal[] } | null = null
+let installedTerminalScanPromise: Promise<InstalledTerminal[]> | null = null
+
+async function scanInstalledTerminals(): Promise<InstalledTerminal[]> {
+  const appRoots = uniquePaths([
+    '/Applications',
+    '/System/Applications',
+    join(homedir(), 'Applications'),
+  ])
+
+  const appPaths = uniquePaths((await Promise.all(appRoots.map((root) => discoverAppBundles(root)))).flat())
+  const terminals = (await Promise.all(appPaths.map((appPath) => buildInstalledTerminal(appPath))))
+    .flatMap((terminal) => terminal ? [terminal] : [])
+    .reduce<InstalledTerminal[]>((unique, terminal) => {
+      if (unique.some((candidate) => candidate.id === terminal.id)) return unique
+      unique.push(terminal)
+      return unique
+    }, [])
+    .sort((a, b) => a.label.localeCompare(b.label))
+
+  installedTerminalCache = {
+    scannedAt: Date.now(),
+    terminals,
+  }
+
+  return terminals
+}
+
+function refreshInstalledTerminals(): Promise<InstalledTerminal[]> {
+  if (installedTerminalScanPromise) return installedTerminalScanPromise
+
+  installedTerminalScanPromise = scanInstalledTerminals().finally(() => {
+    installedTerminalScanPromise = null
+  })
+
+  return installedTerminalScanPromise
+}
+
+async function getInstalledTerminals(): Promise<InstalledTerminal[]> {
+  if (installedTerminalCache && Date.now() - installedTerminalCache.scannedAt < TERMINAL_DISCOVERY_CACHE_MS) {
+    return installedTerminalCache.terminals
+  }
+
+  if (installedTerminalCache) {
+    void refreshInstalledTerminals()
+    return installedTerminalCache.terminals
+  }
+
+  return refreshInstalledTerminals()
+}
+
+async function findInstalledTerminal(preferredId: PreferredTerminalId | TerminalId | null | undefined): Promise<InstalledTerminal | null> {
+  if (!preferredId || preferredId === 'auto') return null
+  return (await getInstalledTerminals()).find((terminal) => terminal.id === preferredId) ?? null
+}
+
+function quoteForShell(input: string): string {
+  return `'${input.replace(/'/g, `'\\''`)}'`
+}
+
+function buildClaudeInvocation(sessionId: string | null): string {
+  return sessionId ? `claude --resume ${quoteForShell(sessionId)}` : 'claude'
+}
+
+function buildClaudeShellCommand(projectPath: string, sessionId: string | null): string {
+  return `cd -- ${quoteForShell(projectPath)} && ${buildClaudeInvocation(sessionId)}`
+}
+
+function createTerminalLaunchScript(projectPath: string, sessionId: string | null): string {
+  const scriptsDir = join(tmpdir(), 'clui-open-in-cli')
+  mkdirSync(scriptsDir, { recursive: true })
+
+  const scriptPath = join(
+    scriptsDir,
+    `launch-${Date.now()}-${Math.random().toString(36).slice(2, 8)}.command`,
+  )
+
+  writeFileSync(scriptPath, [
+    '#!/bin/zsh',
+    `cd -- ${quoteForShell(projectPath)} || exit 1`,
+    buildClaudeInvocation(sessionId),
+    '',
+  ].join('\n'))
+  chmodSync(scriptPath, 0o755)
+
+  return scriptPath
+}
+
+function openScriptInTerminal(scriptPath: string, appPath?: string): Promise<void> {
+  return new Promise((resolvePromise, reject) => {
+    const args = appPath ? ['-a', appPath, scriptPath] : [scriptPath]
+    execFile('/usr/bin/open', args, (err) => {
+      if (err) reject(err)
+      else resolvePromise()
+    })
+  })
+}
+
+async function launchDefaultTerminal(sessionId: string | null, projectPath: string): Promise<void> {
+  const scriptPath = createTerminalLaunchScript(projectPath, sessionId)
+  await openScriptInTerminal(scriptPath)
+}
+
+async function launchTerminal(terminal: InstalledTerminal, sessionId: string | null, projectPath: string): Promise<void> {
+  if (terminal.launchStrategy === 'open-script') {
+    const scriptPath = createTerminalLaunchScript(projectPath, sessionId)
+    await openScriptInTerminal(scriptPath, terminal.appPath)
+    return
+  }
+
+  if (terminal.launchStrategy === 'spawn-alacritty') {
+    const shellCommand = `${buildClaudeInvocation(sessionId)}; exec "\${SHELL:-/bin/zsh}" -l`
+    const child = spawn(terminal.execPath || 'alacritty', [
+      '--working-directory',
+      projectPath,
+      '-e',
+      '/bin/zsh',
+      '-lc',
+      shellCommand,
+    ], {
+      cwd: projectPath,
+      detached: true,
+      stdio: 'ignore',
+    })
+
+    child.unref()
+  }
+}
 
 ipcMain.handle(IPC.SEARCH_SESSIONS, async (_e, query: string) => {
   searchManager.ensureReady()
@@ -696,6 +975,132 @@ function encodeProjectPath(pathOrEncoded: string): string {
   return pathOrEncoded.replace(/[/_]/g, '-')
 }
 
+const COMPACTION_PREFIX = '__COMPACTION_DATA__'
+const LOCAL_COMMAND_PREFIX = '__LOCAL_COMMAND_DATA__'
+
+interface LocalCommandHistoryPayload {
+  commandName: string
+  args?: string
+  output?: string
+}
+
+type LocalCommandHistoryEntry =
+  | { kind: 'caveat' }
+  | { kind: 'command'; commandName: string; args?: string }
+  | { kind: 'stdout'; output: string }
+
+function extractHistoryTextContent(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (Array.isArray(content)) {
+    return content
+      .filter((block: any) => block?.type === 'text' && block.text)
+      .map((block: any) => block.text)
+      .join('\n')
+  }
+  return ''
+}
+
+function parseHistoryTimestamp(value: unknown): number {
+  if (typeof value !== 'string' && typeof value !== 'number') return Date.now()
+  const timestamp = new Date(value).getTime()
+  return Number.isFinite(timestamp) ? timestamp : Date.now()
+}
+
+function extractTaggedHistoryValue(text: string, tag: string): string | null {
+  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)<\\/${tag}>`, 'i'))
+  if (!match) return null
+  return match[1].replace(/\r\n?/g, '\n').trim()
+}
+
+function normalizeLocalCommandName(commandName: string): string {
+  const trimmed = commandName.trim()
+  if (!trimmed) return 'command'
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`
+}
+
+function parseLocalCommandHistoryEntry(text: string): LocalCommandHistoryEntry | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+
+  if (extractTaggedHistoryValue(trimmed, 'local-command-caveat') !== null) {
+    return { kind: 'caveat' }
+  }
+
+  const commandName = extractTaggedHistoryValue(trimmed, 'command-name')
+  if (commandName !== null) {
+    const args = extractTaggedHistoryValue(trimmed, 'command-args')
+    return {
+      kind: 'command',
+      commandName: normalizeLocalCommandName(commandName),
+      args: args ? args : undefined,
+    }
+  }
+
+  const output = extractTaggedHistoryValue(trimmed, 'local-command-stdout')
+  if (output !== null) {
+    return { kind: 'stdout', output }
+  }
+
+  return null
+}
+
+function isCompactLocalCommand(commandName: string): boolean {
+  return commandName.trim().replace(/^\//, '').toLowerCase() === 'compact'
+}
+
+function isCompactLocalCommandOutput(output: string): boolean {
+  return /^compacted\b/i.test(output.trim())
+}
+
+function isSyntheticCompactionHistoryEntry(obj: any, text: string): boolean {
+  if (!text) return false
+
+  if (obj?.isSynthetic === true && text.startsWith('This session is being continued from a previous conversation that ran out of context.')) {
+    return true
+  }
+
+  return false
+}
+
+function buildCompactionHistoryContent(obj: any): string {
+  const compactMetadata = obj?.compact_metadata && typeof obj.compact_metadata === 'object'
+    ? obj.compact_metadata
+    : obj?.data?.compact_metadata && typeof obj.data.compact_metadata === 'object'
+      ? obj.data.compact_metadata
+      : undefined
+
+  const payload = {
+    state: 'completed',
+    message: 'Conversation compacted.',
+    summary: typeof obj?.summary === 'string'
+      ? obj.summary
+      : typeof obj?.data?.summary === 'string'
+        ? obj.data.summary
+        : undefined,
+    trigger: typeof obj?.trigger === 'string'
+      ? obj.trigger
+      : typeof obj?.data?.trigger === 'string'
+        ? obj.data.trigger
+        : typeof compactMetadata?.trigger === 'string'
+          ? compactMetadata.trigger
+          : undefined,
+  }
+
+  return COMPACTION_PREFIX + JSON.stringify(payload)
+}
+
+function buildLocalCommandHistoryContent(payload: LocalCommandHistoryPayload): string {
+  return LOCAL_COMMAND_PREFIX + JSON.stringify(payload)
+}
+
+function extractSessionFirstMessage(obj: any): string | null {
+  const text = extractHistoryTextContent(obj?.message?.content).trim()
+  if (!text) return null
+  if (isSyntheticCompactionHistoryEntry(obj, text)) return null
+  if (parseLocalCommandHistoryEntry(text)) return null
+  return text.substring(0, 100)
+}
+
 ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
   log(`IPC LIST_SESSIONS ${projectPath ? `(path=${projectPath})` : ''}`)
   try {
@@ -741,13 +1146,7 @@ ipcMain.handle(IPC.LIST_SESSIONS, async (_e, projectPath?: string) => {
             if (obj.slug && !meta.slug) meta.slug = obj.slug
             if (obj.timestamp) meta.lastTimestamp = obj.timestamp
             if (obj.type === 'user' && !meta.firstMessage) {
-              const content = obj.message?.content
-              if (typeof content === 'string') {
-                meta.firstMessage = content.substring(0, 100)
-              } else if (Array.isArray(content)) {
-                const textPart = content.find((p: any) => p.type === 'text')
-                meta.firstMessage = textPart?.text?.substring(0, 100) || null
-              }
+              meta.firstMessage = extractSessionFirstMessage(obj)
             }
           } catch {}
           // Read all lines to get the last timestamp
@@ -828,13 +1227,7 @@ ipcMain.handle(IPC.LIST_ALL_SESSIONS, async () => {
               // Extract the real working directory — present in every JSONL entry
               if (obj.cwd && !meta.cwd) meta.cwd = obj.cwd
               if (obj.type === 'user' && !meta.firstMessage) {
-                const content = obj.message?.content
-                if (typeof content === 'string') {
-                  meta.firstMessage = content.substring(0, 100)
-                } else if (Array.isArray(content)) {
-                  const textPart = content.find((p: any) => p.type === 'text')
-                  meta.firstMessage = textPart?.text?.substring(0, 100) || null
-                }
+                meta.firstMessage = extractSessionFirstMessage(obj)
               }
             } catch {}
           })
@@ -875,38 +1268,93 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
     if (!existsSync(filePath)) return []
 
     const messages: Array<{ role: string; content: string; toolName?: string; toolId?: string; timestamp: number }> = []
+    let pendingLocalCommand: (LocalCommandHistoryPayload & { timestamp: number }) | null = null
+    let suppressNextCompactStdout = false
+
+    const flushPendingLocalCommand = (timestamp?: number) => {
+      if (!pendingLocalCommand) return
+
+      const { timestamp: pendingTimestamp, ...payload } = pendingLocalCommand
+      pendingLocalCommand = null
+      if (isCompactLocalCommand(payload.commandName)) {
+        suppressNextCompactStdout = true
+        return
+      }
+
+      messages.push({
+        role: 'system',
+        content: buildLocalCommandHistoryContent(payload),
+        timestamp: timestamp ?? pendingTimestamp,
+      })
+    }
+
     await new Promise<void>((resolve) => {
       const rl = createInterface({ input: createReadStream(filePath) })
       rl.on('line', (line: string) => {
         try {
           const obj = JSON.parse(line)
+          if (obj.type === 'system' && obj.subtype === 'compact_boundary') {
+            flushPendingLocalCommand()
+            messages.push({
+              role: 'system',
+              content: buildCompactionHistoryContent(obj),
+              timestamp: parseHistoryTimestamp(obj.timestamp),
+            })
+            return
+          }
+
           if (obj.type === 'user') {
-            const content = obj.message?.content
-            let text = ''
-            if (typeof content === 'string') {
-              text = content
-            } else if (Array.isArray(content)) {
-              text = content
-                .filter((b: any) => b.type === 'text')
-                .map((b: any) => b.text)
-                .join('\n')
+            const text = extractHistoryTextContent(obj.message?.content)
+            const timestamp = parseHistoryTimestamp(obj.timestamp)
+            const localCommand = parseLocalCommandHistoryEntry(text)
+
+            if (localCommand) {
+              if (localCommand.kind === 'caveat') return
+
+              if (localCommand.kind === 'command') {
+                flushPendingLocalCommand()
+                suppressNextCompactStdout = false
+                pendingLocalCommand = {
+                  commandName: localCommand.commandName,
+                  args: localCommand.args,
+                  timestamp,
+                }
+                return
+              }
+
+              if (pendingLocalCommand) {
+                pendingLocalCommand = {
+                  ...pendingLocalCommand,
+                  output: localCommand.output,
+                }
+                flushPendingLocalCommand(timestamp)
+              } else if (suppressNextCompactStdout && isCompactLocalCommandOutput(localCommand.output)) {
+                suppressNextCompactStdout = false
+              } else if (localCommand.output) {
+                messages.push({ role: 'system', content: localCommand.output, timestamp })
+              }
+              return
             }
+
+            flushPendingLocalCommand()
+            if (isSyntheticCompactionHistoryEntry(obj, text)) return
             if (text) {
-              messages.push({ role: 'user', content: text, timestamp: new Date(obj.timestamp).getTime() })
+              messages.push({ role: 'user', content: text, timestamp })
             }
           } else if (obj.type === 'assistant') {
+            flushPendingLocalCommand()
             const content = obj.message?.content
             if (Array.isArray(content)) {
               for (const block of content) {
                 if (block.type === 'text' && block.text) {
-                  messages.push({ role: 'assistant', content: block.text, timestamp: new Date(obj.timestamp).getTime() })
+                  messages.push({ role: 'assistant', content: block.text, timestamp: parseHistoryTimestamp(obj.timestamp) })
                 } else if (block.type === 'tool_use' && block.name) {
                   messages.push({
                     role: 'tool',
                     content: '',
                     toolName: block.name,
                     toolId: block.id || undefined,
-                    timestamp: new Date(obj.timestamp).getTime(),
+                    timestamp: parseHistoryTimestamp(obj.timestamp),
                   })
                 }
               }
@@ -914,7 +1362,10 @@ ipcMain.handle(IPC.LOAD_SESSION, async (_e, arg: { sessionId: string; projectPat
           }
         } catch {}
       })
-      rl.on('close', () => resolve())
+      rl.on('close', () => {
+        flushPendingLocalCommand()
+        resolve()
+      })
     })
     return messages
   } catch (err) {
@@ -1700,42 +2151,38 @@ ipcMain.handle(IPC.GET_DIAGNOSTICS, () => {
   }
 })
 
-ipcMain.handle(IPC.OPEN_IN_TERMINAL, (_event, arg: string | null | { sessionId?: string | null; projectPath?: string }) => {
-  const { execFile } = require('child_process')
-  const claudeBin = 'claude'
+ipcMain.handle(IPC.LIST_INSTALLED_TERMINALS, async () => {
+  return (await getInstalledTerminals()).map(({ id, label }) => ({ id, label }))
+})
+
+ipcMain.handle(IPC.OPEN_IN_TERMINAL, async (_event, arg: string | null | { sessionId?: string | null; projectPath?: string; terminalId?: PreferredTerminalId | TerminalId | null }) => {
 
   // Support both old (string) and new ({ sessionId, projectPath }) calling convention
   let sessionId: string | null = null
-  let projectPath: string = process.cwd()
+  let projectPath: string = homedir()
+  let terminalId: PreferredTerminalId | TerminalId | null = null
   if (typeof arg === 'string') {
     sessionId = arg
   } else if (arg && typeof arg === 'object') {
     sessionId = arg.sessionId ?? null
-    projectPath = arg.projectPath && arg.projectPath !== '~' ? arg.projectPath : process.cwd()
+    projectPath = arg.projectPath && arg.projectPath !== '~' ? arg.projectPath : homedir()
+    terminalId = arg.terminalId ?? null
   }
 
-  // Escape for AppleScript: double quotes → backslash-escaped, backslashes doubled
-  const projectDir = projectPath.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-  let cmd: string
-  if (sessionId) {
-    cmd = `cd \\"${projectDir}\\" && ${claudeBin} --resume ${sessionId}`
-  } else {
-    cmd = `cd \\"${projectDir}\\" && ${claudeBin}`
-  }
-
-  const script = `tell application "Terminal"
-  activate
-  do script "${cmd}"
-end tell`
+  const terminal = await findInstalledTerminal(terminalId)
+  const logLabel = terminal ? terminal.label : terminalId && terminalId !== 'auto' ? `macOS default (fallback from ${terminalId})` : 'macOS default'
 
   try {
-    execFile('/usr/bin/osascript', ['-e', script], (err: Error | null) => {
-      if (err) log(`Failed to open terminal: ${err.message}`)
-      else log(`Opened terminal with: ${cmd}`)
-    })
+    if (terminal) {
+      await launchTerminal(terminal, sessionId, projectPath)
+    } else {
+      await launchDefaultTerminal(sessionId, projectPath)
+    }
+    log(`Opened terminal with ${logLabel}: ${buildClaudeShellCommand(projectPath, sessionId)}`)
     return true
   } catch (err: unknown) {
-    log(`Failed to open terminal: ${err}`)
+    const message = err instanceof Error ? err.message : String(err)
+    log(`Failed to open terminal (${logLabel}): ${message}`)
     return false
   }
 })
@@ -1821,6 +2268,11 @@ app.whenReady().then(async () => {
     log(`Skill ${status.name}: ${status.state}${status.error ? ` — ${status.error}` : ''}`)
     broadcast(IPC.SKILL_STATUS, status)
   }).catch((err: Error) => log(`Skill provisioning error: ${err.message}`))
+
+  void refreshInstalledTerminals().catch((err) => {
+    const message = err instanceof Error ? err.message : String(err)
+    log(`Terminal discovery warmup failed: ${message}`)
+  })
 
   createWindow()
   snapshotWindowState('after createWindow')

@@ -1,6 +1,21 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { IPC } from '../shared/types'
-import type { RunOptions, NormalizedEvent, HealthReport, EnrichedError, Attachment, SessionMeta, CatalogPlugin, SessionLoadMessage, BtwOptions, BtwEvent, SearchResult, SearchIndexStatus } from '../shared/types'
+import type {
+  RunOptions,
+  NormalizedEvent,
+  HealthReport,
+  EnrichedError,
+  Attachment,
+  SessionMeta,
+  CatalogPlugin,
+  SessionLoadMessage,
+  BtwOptions,
+  BtwEvent,
+  SearchResult,
+  SearchIndexStatus,
+  PreferredTerminalId,
+  TerminalInstallation,
+} from '../shared/types'
 
 export interface CluiAPI {
   // ─── Request-response (renderer → main) ───
@@ -15,7 +30,8 @@ export interface CluiAPI {
   closeTab(tabId: string): Promise<void>
   selectDirectory(): Promise<string | null>
   openExternal(url: string): Promise<boolean>
-  openInTerminal(sessionId: string | null, projectPath?: string): Promise<boolean>
+  openInTerminal(sessionId: string | null, projectPath?: string, terminalId?: PreferredTerminalId | null): Promise<boolean>
+  listInstalledTerminals(): Promise<TerminalInstallation[]>
   attachFiles(): Promise<Attachment[] | null>
   takeScreenshot(): Promise<Attachment | null>
   pasteImage(dataUrl: string): Promise<Attachment | null>
@@ -92,7 +108,8 @@ const api: CluiAPI = {
   closeTab: (tabId) => ipcRenderer.invoke(IPC.CLOSE_TAB, tabId),
   selectDirectory: () => ipcRenderer.invoke(IPC.SELECT_DIRECTORY),
   openExternal: (url) => ipcRenderer.invoke(IPC.OPEN_EXTERNAL, url),
-  openInTerminal: (sessionId, projectPath) => ipcRenderer.invoke(IPC.OPEN_IN_TERMINAL, { sessionId, projectPath }),
+  openInTerminal: (sessionId, projectPath, terminalId) => ipcRenderer.invoke(IPC.OPEN_IN_TERMINAL, { sessionId, projectPath, terminalId }),
+  listInstalledTerminals: () => ipcRenderer.invoke(IPC.LIST_INSTALLED_TERMINALS),
   attachFiles: () => ipcRenderer.invoke(IPC.ATTACH_FILES),
   takeScreenshot: () => ipcRenderer.invoke(IPC.TAKE_SCREENSHOT),
   pasteImage: (dataUrl) => ipcRenderer.invoke(IPC.PASTE_IMAGE, dataUrl),

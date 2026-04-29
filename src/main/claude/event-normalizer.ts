@@ -3,6 +3,8 @@ import type {
   NormalizedEvent,
   StreamEvent,
   InitEvent,
+  StatusEvent,
+  CompactBoundaryEvent,
   AssistantEvent,
   ResultEvent,
   RateLimitEvent,
@@ -46,7 +48,15 @@ export function normalize(raw: ClaudeEvent): NormalizedEvent[] {
   }
 }
 
-function normalizeSystem(event: InitEvent): NormalizedEvent[] {
+function normalizeSystem(event: InitEvent | StatusEvent | CompactBoundaryEvent): NormalizedEvent[] {
+  if (event.subtype === 'status') {
+    return normalizeStatus(event)
+  }
+
+  if (event.subtype === 'compact_boundary') {
+    return normalizeCompactBoundary(event)
+  }
+
   if (event.subtype !== 'init') return []
 
   return [{
@@ -57,6 +67,115 @@ function normalizeSystem(event: InitEvent): NormalizedEvent[] {
     mcpServers: event.mcp_servers || [],
     skills: event.skills || [],
     version: event.claude_code_version || 'unknown',
+  }]
+}
+
+function extractStatusText(event: StatusEvent | CompactBoundaryEvent): string {
+  const fromData = event.data && typeof event.data === 'object'
+    ? (
+        typeof event.data.message === 'string' ? event.data.message
+          : typeof event.data.status === 'string' ? event.data.status
+            : typeof event.data.summary === 'string' ? event.data.summary
+            : typeof event.data.content === 'string' ? event.data.content
+              : ''
+      )
+    : ''
+
+  if (typeof event.message === 'string' && event.message.trim()) return event.message
+  if (typeof event.status === 'string' && event.status.trim()) return event.status
+  if ('summary' in event && typeof event.summary === 'string' && event.summary.trim()) return event.summary
+  if (typeof event.content === 'string' && event.content.trim()) return event.content
+  if (fromData.trim()) return fromData
+
+  return ''
+}
+
+function extractCompactResult(event: StatusEvent): string | undefined {
+  if (typeof event.compact_result === 'string' && event.compact_result.trim()) {
+    return event.compact_result.trim().toLowerCase()
+  }
+  if (typeof event.data?.compact_result === 'string' && event.data.compact_result.trim()) {
+    return event.data.compact_result.trim().toLowerCase()
+  }
+  return undefined
+}
+
+function looksLikeCompaction(text: string, event: StatusEvent | CompactBoundaryEvent): boolean {
+  if (event.subtype === 'compact_boundary') return true
+
+  if ('compact_result' in event && typeof extractCompactResult(event) === 'string') {
+    return true
+  }
+
+  const haystack = [
+    text,
+    typeof event.status === 'string' ? event.status : '',
+    typeof event.message === 'string' ? event.message : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+    .toLowerCase()
+
+  return /\bcompact(?:ing|ed|ion)?\b|\bsummar(?:y|ize|izing|ized)\b|\bcontext\b/.test(haystack)
+}
+
+function normalizeStatus(event: StatusEvent): NormalizedEvent[] {
+  const compactResult = extractCompactResult(event)
+  let message = extractStatusText(event)
+
+  if (!message && compactResult === 'success') {
+    // compact_boundary carries the authoritative completion metadata.
+    // Ignore the intermediary success status so the UI does not regress to
+    // a generic "Working..." state between compaction start and completion.
+    return []
+  }
+
+  if (!message && compactResult) {
+    message = compactResult === 'success'
+      ? 'Conversation compacted.'
+      : 'Compaction interrupted.'
+  }
+
+  if ((event.status || '').toLowerCase() === 'compacting' && message.toLowerCase() === 'compacting') {
+    message = 'Compacting conversation...'
+  }
+
+  message = message || 'Working...'
+  return [{
+    type: 'status_update',
+    message,
+    sessionId: event.session_id || null,
+    status: typeof event.status === 'string' ? event.status : undefined,
+    isCompaction: looksLikeCompaction(message, event),
+  }]
+}
+
+function normalizeCompactBoundary(event: CompactBoundaryEvent): NormalizedEvent[] {
+  const summary = extractStatusText(event) || undefined
+  const compactMetadata = event.compact_metadata && typeof event.compact_metadata === 'object'
+    ? event.compact_metadata
+    : event.data?.compact_metadata && typeof event.data.compact_metadata === 'object'
+      ? event.data.compact_metadata
+      : undefined
+  const trigger = typeof event.trigger === 'string'
+    ? event.trigger
+    : typeof event.data?.trigger === 'string'
+      ? event.data.trigger
+      : typeof compactMetadata?.trigger === 'string'
+        ? compactMetadata.trigger
+      : undefined
+  const compactedMessages = typeof event.compacted_messages === 'number'
+    ? event.compacted_messages
+    : typeof event.data?.compacted_messages === 'number'
+      ? event.data.compacted_messages
+      : undefined
+
+  return [{
+    type: 'compact_boundary',
+    sessionId: event.session_id || null,
+    summary,
+    trigger,
+    compactedMessages,
   }]
 }
 

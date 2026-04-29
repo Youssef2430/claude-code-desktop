@@ -166,6 +166,94 @@ input::placeholder {
   white-space: normal;
 }
 
+/* ─── Prose overrides for user message bubbles ───
+   Inherits layout from .prose-cloud but adapts colors for the user-bubble background. */
+.prose-cloud-user {
+  color: var(--clui-user-bubble-text);
+  line-height: 1.6;
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.prose-cloud-user p {
+  margin: 0.25em 0;
+}
+.prose-cloud-user pre {
+  background: rgba(0,0,0,0.12);
+  border: 1px solid var(--clui-user-bubble-border);
+  border-radius: 10px;
+  padding: 0.75em 1em;
+  font-size: 12px;
+  overflow-x: auto;
+}
+.prose-cloud-user code {
+  background: rgba(0,0,0,0.1);
+  color: inherit;
+  padding: 0.15em 0.35em;
+  border-radius: 4px;
+  font-size: 0.9em;
+}
+.prose-cloud-user pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+.prose-cloud-user a {
+  color: var(--clui-accent);
+  text-decoration: none;
+}
+.prose-cloud-user a:hover {
+  text-decoration: underline;
+}
+.prose-cloud-user ul, .prose-cloud-user ol {
+  padding-left: 1.2em;
+  margin: 0.25em 0;
+}
+.prose-cloud-user li {
+  margin: 0.1em 0;
+}
+.prose-cloud-user h1, .prose-cloud-user h2, .prose-cloud-user h3, .prose-cloud-user h4 {
+  margin: 0.5em 0 0.25em;
+  font-weight: 600;
+  color: inherit;
+}
+.prose-cloud-user blockquote {
+  border-left: 3px solid var(--clui-user-bubble-border);
+  padding-left: 0.75em;
+  opacity: 0.8;
+  margin: 0.5em 0;
+}
+.prose-cloud-user table {
+  border-collapse: collapse;
+  width: max-content;
+  min-width: 100%;
+  font-size: 12px;
+}
+.prose-cloud-user th, .prose-cloud-user td {
+  border: 1px solid var(--clui-user-bubble-border);
+  padding: 0.4em 0.6em;
+  overflow-wrap: anywhere;
+}
+.prose-cloud-user th:first-child, .prose-cloud-user td:first-child {
+  white-space: nowrap;
+}
+.prose-cloud-user th {
+  background: rgba(0,0,0,0.08);
+  font-weight: 600;
+}
+/* KaTeX in user bubbles */
+.prose-cloud-user .katex {
+  font-size: 1em;
+  color: inherit;
+}
+.prose-cloud-user .katex-display {
+  margin: 0.6em 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.prose-cloud-user .katex-display > .katex {
+  white-space: normal;
+}
+
 /* ─── Pulsing dot animation ─── */
 @keyframes pulse-dot {
   0%, 100% { opacity: 1; transform: scale(1); }
